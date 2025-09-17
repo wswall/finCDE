@@ -76,8 +76,10 @@ f(z_t; \xi, \lambda, \gamma, \delta) =
     \cdot 
     \phi \left[
         \gamma + \delta \sinh^{-1} \Big(\frac{z_t - \xi}{\lambda}\Big)
-    \right] 
-\\\,\\
+    \right]
+$$  
+
+$$
 \begin{aligned}
     & \omega = \exp(\delta^{-2})\\
     &\Omega = \frac{\gamma}{\delta}
