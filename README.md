@@ -38,6 +38,7 @@ f(r_t;\mu_t, \sigma_t, \eta) = \frac{1}{\sigma_t}\cdot f\left (\frac{r_t - \mu_t
 $$  
 
 Each distribution defines a density function `.pdf()`, quantile function `.ppf()`, and log-likelihood function `.llh()`. All distribution classes inherit the method `.crps()` which calculates the Continuous Ranked Probability Score using the integral of the Quantile Score from 0 to 1 ([Gneiting and Ranjan 2011](https://www.jstor.org/stable/23243806)).
+
 $$
 \begin{aligned}
 \text{CRPS}(f,y) & = \int^{\infty}_{-\infty}(F(z) - \mathbb{I}[y \le z])^2dz \\
@@ -56,7 +57,7 @@ $$
 $$
 \begin{aligned}
 & f(z_t;\xi,\eta) = \frac{2\sigma_\xi}{\xi + \frac{1}{\xi}} \cdot f(z_{\xi t};\eta) 
-\\[15px]
+\\\,\\
 & z_{\xi t} = (\sigma_{\xi}z_t + \mu_{\xi})\xi^{sgn(\sigma_{\xi}z_t + \mu_{\xi})}
 \\
 & \mu_{\xi} = \text{M}_1(\xi - \frac{1}{\xi})
@@ -65,7 +66,7 @@ $$
 \end{aligned}
 $$
 
-`dist.CondJsu` uses density and quantile functions adapted from the R package `rugarch` rather than equivalent methods from `scipy.stats`. A jit-compiled log-likelihood function has not been implemented for this distribution, but is intended to be added in the future. Instead, `.llh()` sums the log of the values returned by its `.pdf()` method.
+`dist.CondJsu` uses density and quantile functions adapted from the R package `rugarch` rather than equivalent methods from `scipy.stats`. A jit-compiled log-likelihood function has not been implemented for this distribution, but is intended to be added in the future. Instead, `.llh()` sums the log of the values returned by its `.pdf()` method.  
 
 $$
 f(z_t; \xi, \lambda, \gamma, \delta) = 
@@ -76,7 +77,7 @@ f(z_t; \xi, \lambda, \gamma, \delta) =
     \phi \left[
         \gamma + \delta \sinh^{-1} \Big(\frac{z_t - \xi}{\lambda}\Big)
     \right] 
-\\[15px]
+\\\,\\
 \begin{aligned}
     & \omega = \exp(\delta^{-2})\\
     &\Omega = \frac{\gamma}{\delta}
@@ -87,6 +88,7 @@ f(z_t; \xi, \lambda, \gamma, \delta) =
     & \lambda = \left[ \frac{1}{2}(\omega - 1)(\omega\cosh2\Omega + 1) \right]^{-\frac{1}{2}}
 \end{aligned}
 $$
+
 <br>
 
 ## Future Development
