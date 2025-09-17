@@ -34,7 +34,7 @@ The model is constructed by passing a Keras Hyperparameters object and a distrib
 Distributions for parametric models are implemented as classes in `dist.py`. The inputs to these distributions are assumed to be standardized residuals, so the above described parametric models must apply the transformation:  
 
 $$
-f(r_t;\mu_t, \sigma_t, \eta) = \frac{1}{\sigma_t}f\left (\frac{r_t - \mu_t}{\sigma_t}; \eta \right)
+f(r_t;\mu_t, \sigma_t, \eta) = \frac{1}{\sigma_t}\cdot f\left (\frac{r_t - \mu_t}{\sigma_t}; \eta \right)
 $$  
 
 Each distribution defines a density function `.pdf()`, quantile function `.ppf()`, and log-likelihood function `.llh()`. All distribution classes inherit the method `.crps()` which calculates the Continuous Ranked Probability Score using the integral of the Quantile Score from 0 to 1 ([Gneiting and Ranjan 2011](https://www.jstor.org/stable/23243806)).
@@ -54,27 +54,37 @@ $$
 `dist.CondSNorm`, `dist.CondSLap`, `dist.CondST` add skewness to the corresponding symmetric distribution using [Wurtz et al. (2006)](https://api.semanticscholar.org/CorpusID:17916711) reparametrization of [Fernandez and Steel (1998)](https://doi.org/10.2307/2669632).
 
 $$
-\begin{align*}
-& f(z_t;\xi,\eta) = \frac{2\sigma_\xi}{\xi + \frac{1}{\xi}}f(z_{\xi t};\eta) \\ 
-& z_{\xi t} = \xi^{sgn(\sigma_{\xi}z_t + \mu_{\xi})}(\sigma_{\xi}z_t + \mu_{\xi})  \\
-& \mu_{\xi} = \text{M}_1(\xi - \frac{1}{\xi})  \\
-& \sigma_{\xi} = (1 - \text{M}_1^2)(\xi^2 + \frac{1}{\xi^2}) + 2\text{M}_1^2 - 1  \\
-\end{align*}
+\begin{aligned}
+& f(z_t;\xi,\eta) = \frac{2\sigma_\xi}{\xi + \frac{1}{\xi}} \cdot f(z_{\xi t};\eta) 
+\\[15px]
+& z_{\xi t} = (\sigma_{\xi}z_t + \mu_{\xi})\xi^{sgn(\sigma_{\xi}z_t + \mu_{\xi})}
+\\
+& \mu_{\xi} = \text{M}_1(\xi - \frac{1}{\xi})
+\\
+&\sigma_{\xi} = (1 - \text{M}_1^2)(\xi^2 + \frac{1}{\xi^2}) + 2\text{M}_1^2 - 1
+\end{aligned}
 $$
 
 `dist.CondJsu` uses density and quantile functions adapted from the R package `rugarch` rather than equivalent methods from `scipy.stats`. A jit-compiled log-likelihood function has not been implemented for this distribution, but is intended to be added in the future. Instead, `.llh()` sums the log of the values returned by its `.pdf()` method.
-$$
-    f(z_t;\xi,\lambda,\gamma,\delta) = 
-    \frac{\delta}{\lambda\sqrt{1 + \Big(\frac{z_t - \xi}{\lambda}\Big)^2}} 
-    \cdot \phi\left[\gamma+\delta\sinh^{-1}\Big(\frac{z_t-\xi}{\lambda}\Big)\right]
-$$
 
 $$
+f(z_t; \xi, \lambda, \gamma, \delta) = 
+    \frac{\delta}{
+        \lambda\sqrt{1 + \Big(\frac{z_t - \xi}{\lambda}\Big)^2}
+        } 
+    \cdot 
+    \phi \left[
+        \gamma + \delta \sinh^{-1} \Big(\frac{z_t - \xi}{\lambda}\Big)
+    \right] 
+\\[15px]
 \begin{aligned}
-    & \xi = -\lambda\omega^{\frac{1}{2}}\sinh\Omega \quad\quad
-    \lambda = \left[ \frac{1}{2}(\omega - 1)(\omega\cosh2\Omega + 1) \right]^{-\frac{1}{2}}  \\
-    & \omega = \exp(\delta^{-2}) \quad\quad 
-    \Omega = \frac{\gamma}{\delta} \\
+    & \omega = \exp(\delta^{-2})\\
+    &\Omega = \frac{\gamma}{\delta}
+\end{aligned}
+\quad
+\begin{aligned}
+    & \xi = -\lambda\omega^{\frac{1}{2}}\sinh\Omega \\
+    & \lambda = \left[ \frac{1}{2}(\omega - 1)(\omega\cosh2\Omega + 1) \right]^{-\frac{1}{2}}
 \end{aligned}
 $$
 <br>

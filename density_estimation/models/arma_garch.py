@@ -7,8 +7,19 @@ from density_estimation.common import OFFSET, LLH_SCALING, sumjit
 from density_estimation.dist import ConditionalDistribution
 
 
-@njit(f8[::1](f8[:], f8, f8[::1], f8[::1]))
+@njit(f8[::1](f8[:], f8, f8[::1], f8[::1]), fastmath=True)
 def calc_arma(returns, mu, phi, theta):
+    """Compute ARMA residuals for a given time series.
+
+    Args:
+        returns (np.ndarray): Input time series.
+        mu (float): Mean parameter.
+        phi (np.ndarray): AR coefficients.
+        theta (np.ndarray): MA coefficients.
+
+    Returns:
+        np.ndarray: Residuals from ARMA model.
+    """
     y_init = mu / (1.0 - sumjit(phi) - sumjit(theta))
     residuals = np.empty(returns.shape[0], dtype=np.float64)
     residuals[0] = returns[0] - mu - sumjit(phi) * y_init
@@ -36,8 +47,19 @@ def calc_arma(returns, mu, phi, theta):
     return residuals
 
 
-@njit(f8[::1](f8[:], f8, f8[::1], f8[::1]))
+@njit(f8[::1](f8[:], f8, f8[::1], f8[::1]), fastmath=True)
 def calc_garch(residuals, omega, alpha, beta):
+    """Compute GARCH conditional variances for a given residual series.
+
+    Args:
+        residuals (np.ndarray): Residuals from ARMA or similar model.
+        omega (float): Constant term.
+        alpha (np.ndarray): ARCH coefficients.
+        beta (np.ndarray): GARCH coefficients.
+
+    Returns:
+        np.ndarray: Conditional variances from GARCH model.
+    """
     variance = np.empty(residuals.shape[0], dtype=np.float64)
     p, q = alpha.shape[0], beta.shape[0]
     variance[: max(p, q)] = omega / (1.0 - sumjit(alpha) - sumjit(beta))
@@ -53,6 +75,16 @@ def calc_garch(residuals, omega, alpha, beta):
 
 
 class ARMA:
+    """Autoregressive Moving Average (ARMA) model.
+
+    Args:
+        m (int): Order of the autoregressive part.
+        n (int): Order of the moving average part.
+
+    Attributes:
+        params (dict): Model parameters (phi, theta, mu).
+        bounds (Bounds): Parameter bounds for optimization.
+    """
 
     def __init__(self, m: int, n: int):
         self.params = {
@@ -76,7 +108,7 @@ class ARMA:
         high[0] = np.inf
         return Bounds(lb=-high, ub=high)
 
-    def set_params(self, params: Mapping[str, float]) -> None:
+    def set_params(self, params: dict[str, float]) -> None:
         self.params.update(params)
 
     def __call__(self, returns: np.ndarray) -> np.ndarray:
@@ -90,12 +122,22 @@ class ARMA:
 
 
 class GARCH:
+    """Generalized Autoregressive Conditional Heteroskedasticity (GARCH) model.
+
+    Args:
+        p (int): Order of the GARCH terms (alpha).
+        q (int): Order of the ARCH terms (beta).
+
+    Attributes:
+        params (dict): Model parameters (alpha, beta, omega).
+        bounds (Bounds): Parameter bounds for optimization.
+    """
 
     def __init__(self, p, q):
         self.params = {
             "alpha": np.zeros(p, dtype=np.float64),
             "beta": np.zeros(q, dtype=np.float64),
-            "omega": 0.0
+            "omega": 0.0,
         }
         self.bounds = self._set_bounds()
 
@@ -140,7 +182,7 @@ class ArmaGarch:
     Args:
         arma_mn (tuple[int, int]): The orders (m,n) of the ARMA model.
         garch_pq (tuple[int, int]): The orders (p,q) of the GARCH model.
-        error_dist (ConditionalDistribution): The distribution of 
+        error_dist (ConditionalDistribution): The distribution of
             standardized residuals.
 
     Attributes:
@@ -148,7 +190,7 @@ class ArmaGarch:
         garch (GARCH): The GARCH model.
         n_model_params (int): The number of parameters in the ARMA and
             GARCH models.
-        error_dist (ConditionalDistribution): The distribution of 
+        error_dist (ConditionalDistribution): The distribution of
             standardized residuals.
     """
 
@@ -178,6 +220,7 @@ class ArmaGarch:
         }
 
     def set_params(self, params):
+        
         arma_params = {k: v for k, v in params.items() if k in self.arma.params}
         garch_params = {k: v for k, v in params.items() if k in self.garch.params}
         self.arma.set_params(arma_params)

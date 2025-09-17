@@ -1,4 +1,4 @@
-from keras_tuner import HyperParameter, HyperParameters
+from keras_tuner.engine.hyperparameters import HyperParameters, HyperParameter
 import tensorflow as tf
 import tensorflow_probability as tfp
 from tensorflow_probability import distributions as tfd
@@ -60,6 +60,15 @@ DISTRIBUTIONS = {
 
 
 def _choose_regularization(hp: HyperParameter, hp_name: str) -> Regularizer | None:
+    """Select L1 regularization if enabled in hyperparameters.
+
+    Args:
+        hp (HyperParameter): Hyperparameter object.
+        hp_name (str): Name of the regularization parameter.
+
+    Returns:
+        Regularizer or None: L1 regularizer if enabled, else None.
+    """
     if hp.Boolean(f"{hp_name}_bool"):
         reg_val = hp.Float(hp_name, min_value=1e-5, max_value=1e1, sampling="log")
         return L1(reg_val)
@@ -72,6 +81,17 @@ def _make_dense(
     kreg: Regularizer | None = None,
     areg: Regularizer | None = None,
 ):
+    """Create a Keras dense layer with optional regularization and activation.
+
+    Args:
+        n (int): Number of units.
+        act (str): Activation function.
+        kreg (Regularizer, optional): Kernel regularizer.
+        areg (Regularizer, optional): Activity regularizer.
+
+    Returns:
+        keras.layers.Dense: Configured dense layer.
+    """
     return keras.layers.Dense(
         n, activation=act, kernel_regularizer=kreg, activity_regularizer=areg
     )

@@ -10,6 +10,15 @@ from density_estimation.dist import ConditionalDistribution
 
 @njit(f8[:, :](f8[:, :], f8[:]))
 def argarch(out, params):
+    """Compute AR(1)-GARCH(1,1) recursion for mean and variance.
+
+    Args:
+        out (np.ndarray): Output array to store results.
+        params (np.ndarray): Model parameters [mu, phi, omega, alpha, beta].
+
+    Returns:
+        np.ndarray: Updated output array with mean and variance columns.
+    """
     mu, phi, omega, alpha, beta = params
     returns = out[:, 0].copy()
     out[0, 0] -= mu - phi * mu / (1.0 - phi)
@@ -24,11 +33,11 @@ class ArGarch:
     """AR(1)-GARCH(1,1) model with various error distribution
 
     Args:
-        error_dist (ConditionalDistribution): The distribution of 
+        error_dist (ConditionalDistribution): The distribution of
             standardized residuals.
 
     Attributes:
-        error_dist (ConditionalDistribution): The distribution of 
+        error_dist (ConditionalDistribution): The distribution of
             standardized residuals.
         params (Mapping[str, float]): The parameters of the model.
         bounds (Bounds): The bounds for parameters during optimization.
@@ -99,22 +108,22 @@ class ArGarch:
         Fits the model to the given returns data using optimization.
 
         The optimization is performed using the Sequential Least Squares
-        Programming (SLSQP) method. If the optimization is successful, 
-        the model parameters are updated, and the error distribution is 
+        Programming (SLSQP) method. If the optimization is successful,
+        the model parameters are updated, and the error distribution is
         initialized.
-        
+
         Args:
-            returns (np.ndarray[float]): The observed returns data to fit 
+            returns (np.ndarray[float]): The observed returns data to fit
                 the model to.
-            initial_guess (np.ndarray[float]): Initial guess for the 
+            initial_guess (np.ndarray[float]): Initial guess for the
                 optimization parameters.
-            display (bool, optional): Whether to display optimization 
+            display (bool, optional): Whether to display optimization
                 progress. Defaults to True.
             ftol (float, optional): The tolerance for termination by the
                 change in the function value. Defaults to OFFSET.
             maxiter (int, optional): The maximum number of iterations for
                 the optimizer. Defaults to 100.
-        
+
         Returns:
             OptimizeResult: The result of the optimization process.
         """

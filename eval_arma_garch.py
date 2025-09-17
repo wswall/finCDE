@@ -4,21 +4,20 @@ import platform
 import time
 from itertools import product
 
-from numba import njit, f8
 import numpy as np
 import pandas as pd
 
-from dist import (
+from density_estimation.dist import (
     Normal,
     StudentT,
     Laplace,
     CondSNorm,
     CondST,
     CondSLap,
-    CondJsu
+    CondJsu,
 )
-from models.arma_garch import ArmaGarch
-from har import get_data
+from density_estimation.models.arma_garch import ArmaGarch
+from density_estimation.common import get_data, kurtosis
 
 
 # Get count of CPUs available to this process
@@ -28,6 +27,7 @@ if platform.system() == "Windows":
 else:
     from os import sched_getaffinity
     PROC_COUNT = len(sched_getaffinity(0))
+
 DATA_DIR = "data/TAQ"
 PHI_RANGE = range(1, 3)
 THETA_RANGE = range(0, 3)
@@ -35,10 +35,15 @@ ALPHA_RANGE = range(1, 3)
 BETA_RANGE = range(1, 3)
 
 
+# Global variable to hold data used by worker processes
+company_data = {}
+
+
 def worker(spec: dict) -> list:
     phis, thetas, alphas, betas = spec["params"]
     model = ArmaGarch((phis, thetas), (alphas, betas), spec["dist"])
-    res = model.fit(spec["data"], spec["initial"], display=False)
+    data = company_data[spec["company"]]
+    res = model.fit(data, spec["initial"], display=False)
     return [spec["company"], spec["dist"].name, str(spec["params"]), res.x, res.fun]
 
 
@@ -52,17 +57,18 @@ if __name__ == "__main__":
         "skewnorm": {"cls": CondSNorm, "shape_guess": [1.0]},
         "skewt": {"cls": CondST, "shape_guess": []},
         "skewlap": {"cls": CondSLap, "shape_guess": [1.0]},
-        "jsu": {"cls": CondJsu, "shape_guess": [0.0, 1.0]}
+        "jsu": {"cls": CondJsu, "shape_guess": [0.0, 1.0]},
     }
 
     sample_T = {}
     model_specs = []
-    for csv_path in Path('data/TAQ').iterdir():
-        company = csv_path.stem.split('_')[0]
+    for csv_path in Path(DATA_DIR).iterdir():
+        company = csv_path.stem.split("_")[0]
         data = get_data(csv_path)
-        sample_T[company]  = data.shape[0] // 10 * 8
+        sample_T = data.shape[0] // 10 * 8
 
-        sample = data[: sample_T[company], 0]
+        sample = data[: sample_T, 0]
+        company_data[company] = sample
         # Calculate initial guesses for parameters
         lr_mean = sample.mean()
         lr_var = sample.var(ddof=1)
@@ -89,12 +95,11 @@ if __name__ == "__main__":
                         "company": company,
                         "params": combo,
                         "dist": dist,
-                        "initial": initial,
-                        "data": sample,
+                        "initial": initial
                     }
                 )
 
-    print(f"Starting evaluation with {len(model_specs)} model fits using {PROC_COUNT} cores.")
+    print(f"Fitting {len(model_specs)} models on {PROC_COUNT} cores.")
     s = time.time()
     with Pool(PROC_COUNT) as p:
         results = p.map(worker, model_specs)
@@ -104,7 +109,7 @@ if __name__ == "__main__":
     columns = ["company", "dist", "order", "fit_params", "llh"]
     df = pd.DataFrame(results, columns=columns)
     k = df.fit_params.apply(len)
-    T = df.company.map(sample_T)
+    T = df.company.apply(lambda x: company_data[x].shape[0])
 
     df["llh"] = -df.llh * 1e5
     df["aic"] = (2 * k - 2 * df.llh) / T
