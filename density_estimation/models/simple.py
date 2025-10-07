@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections.abc import Sequence
 
 from numba import njit, f8
 import numpy as np
@@ -76,18 +77,18 @@ class ArGarch:
         out = np.array([returns, np.repeat(self.params["omega"], returns.size)]).T
         return argarch(out, self.param_vec)
 
-    def _params_from_vec(self, x):
+    def _params_from_vec(self, x: Sequence[float]) -> dict[str, float]:
         return {"mu": x[0], "phi": x[1], "omega": x[2], "alpha": x[3], "beta": x[4]}
 
     def set_params(self, params: dict[str, float]) -> None:
         self.params.update(params)
 
-    def _init_dist(self, x):
+    def _init_dist(self, x: Sequence[float]) -> ConditionalDistribution:
         if self.error_dist.n_params:
             return self.error_dist(*x[len(self.params) :])
         return self.error_dist()
 
-    def _fitness(self, x, *args):
+    def _fitness(self, x: Sequence[float], *args: Any) -> float:
         returns = args[0]
         out = np.array([returns, np.repeat(x[2], returns.size)]).T
         fit_data = argarch(out, x[:5])

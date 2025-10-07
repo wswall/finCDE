@@ -1,7 +1,9 @@
+from collections.abc import Sequence
+
 from numba import njit, f8, prange
 import numpy as np
 from numpy.polynomial import polynomial as poly
-from scipy.optimize import Bounds, minimize
+from scipy.optimize import Bounds, minimize, OptimizeResult
 
 from density_estimation.common import OFFSET, LLH_SCALING, sumjit
 from density_estimation.dist import ConditionalDistribution
@@ -92,26 +94,42 @@ class ARMA:
             "theta": np.zeros(n, dtype=np.float64),
             "mu": 0.0,
         }
-        self.bounds = self._set_bounds()
+        self.bounds = self._make_bounds()
 
     @property
     def m(self) -> int:
+        """Return the order of the autoregressive part."""
         return self.params["phi"].size
 
     @property
     def n(self) -> int:
+        """Return the order of the moving average part."""
         return self.params["theta"].size
 
-    def _set_bounds(self):
+    def _make_bounds(self) -> Bounds:
         n_params = self.m + self.n + 1
         high = np.ones(n_params) - OFFSET
         high[0] = np.inf
         return Bounds(lb=-high, ub=high)
 
     def set_params(self, params: dict[str, float]) -> None:
+        """Update model parameters.
+
+        Args:
+            params (dict[str, float]): Dictionary of parameter names and values.
+                Valid keys are 'phi', 'theta', and 'mu'.
+        """
         self.params.update(params)
 
     def __call__(self, returns: np.ndarray) -> np.ndarray:
+        """Apply the ARMA model to compute residuals.
+
+        Args:
+            returns (np.ndarray): Input time series of returns.
+
+        Returns:
+            np.ndarray: Residuals from the ARMA model.
+        """
         return calc_arma(
             returns, self.params["mu"], self.params["phi"], self.params["theta"]
         )
@@ -125,45 +143,61 @@ class GARCH:
     """Generalized Autoregressive Conditional Heteroskedasticity (GARCH) model.
 
     Args:
-        p (int): Order of the GARCH terms (alpha).
-        q (int): Order of the ARCH terms (beta).
+        p (int): Number of lagged residual terms (alpha).
+        q (int): Number of lagged volatility terms (beta).
 
     Attributes:
         params (dict): Model parameters (alpha, beta, omega).
         bounds (Bounds): Parameter bounds for optimization.
     """
 
-    def __init__(self, p, q):
+    def __init__(self, p: int, q: int):
         self.params = {
             "alpha": np.zeros(p, dtype=np.float64),
             "beta": np.zeros(q, dtype=np.float64),
             "omega": 0.0,
         }
-        self.bounds = self._set_bounds()
+        self.bounds = self._make_bounds()
 
     @property
-    def p(self):
+    def p(self) -> int:
+        """Return the number of lagged residual terms."""
         return self.params["alpha"].size
 
     @property
-    def q(self):
+    def q(self) -> int:
+        """Return the number of lagged volatility terms."""
         return self.params["beta"].size
 
-    def _set_bounds(self):
+    def _make_bounds(self) -> Bounds:
         n_params = self.params["alpha"].size + self.params["beta"].size + 1
         low, high = np.zeros(n_params), np.ones(n_params)
         low[0], high[0] = OFFSET, np.inf
         return Bounds(lb=low, ub=high)
 
-    def __call__(self, residuals, var_init=None):
+    def __call__(self, residuals: np.ndarray) -> np.ndarray:
+        """Apply the GARCH model to compute conditional variances.
+
+        Args:
+            residuals (np.ndarray): Residuals from ARMA or similar model.
+
+        Returns:
+            np.ndarray: Conditional variances from the GARCH model.
+        """
         return calc_garch(
             residuals, self.params["omega"], self.params["alpha"], self.params["beta"]
         )
 
-    def set_params(self, params):
+    def set_params(self, params: dict[str, float]) -> None:
+        """Update model parameters.
+
+        Args:
+            params (dict): Dictionary of parameter names and values.
+                Valid keys are 'alpha', 'beta', and 'omega'.
+        """
         self.params.update(params)
 
-    def _check_stationary(self):
+    def _check_stationary(self) -> bool:
         alpha_poly = poly.Polynomial(-np.array([-1, *self.params["alpha"]]))
         beta_poly = poly.Polynomial(np.array([0, *self.params["beta"]]))
         char_poly = alpha_poly - beta_poly
@@ -194,19 +228,29 @@ class ArmaGarch:
             standardized residuals.
     """
 
-    def __init__(self, arma_mn, garch_pq, error_dist):
+    def __init__(
+        self,
+        arma_mn: tuple[int, int],
+        garch_pq: tuple[int, int],
+        error_dist: ConditionalDistribution,
+    ):
         self.arma = ARMA(*arma_mn)
         self.garch = GARCH(*garch_pq)
         self.n_model_params = 2 + sum(arma_mn) + sum(garch_pq)
         self.error_dist = error_dist
 
     @property
-    def bounds(self):
+    def bounds(self) -> Bounds:
+        """Get parameter bounds object for optimization.
+
+        Returns:
+            Bounds: Combined bounds for ARMA, GARCH, and error distribution parameters.
+        """
         lbs = [self.arma.bounds.lb, self.garch.bounds.lb, self.error_dist.bounds.lb]
         ubs = [self.arma.bounds.ub, self.garch.bounds.ub, self.error_dist.bounds.ub]
         return Bounds(lb=np.concatenate(lbs), ub=np.concatenate(ubs))
 
-    def _params_from_vec(self, x):
+    def _params_from_vec(self, x: Sequence[float]) -> dict[str, np.ndarray | float]:
         phi_bound = 1 + self.arma.m
         theta_bound = phi_bound + self.arma.n
         alpha_bound = 1 + theta_bound + self.garch.p
@@ -219,24 +263,30 @@ class ArmaGarch:
             "beta": x[alpha_bound:],
         }
 
-    def set_params(self, params):
-        
+    def set_params(self, params: dict[str, np.ndarray | float]) -> None:
+        """Update ARMA and GARCH model parameters.
+
+        Args:
+            params (dict): Dictionary of parameter names and values.
+                Valid keys include ARMA parameters ('phi', 'theta', 'mu')
+                and GARCH parameters ('alpha', 'beta', 'omega').
+        """
         arma_params = {k: v for k, v in params.items() if k in self.arma.params}
         garch_params = {k: v for k, v in params.items() if k in self.garch.params}
         self.arma.set_params(arma_params)
         self.garch.set_params(garch_params)
 
-    def _check_constraints(self):
+    def _check_constraints(self) -> bool:
         if self.garch._check_stationary():
             return self.arma._check_stationary()
         return False
 
-    def _init_dist(self, x):
+    def _init_dist(self, x: Sequence[float]) -> ConditionalDistribution:
         if self.error_dist.n_params:
             return self.error_dist(*x[self.n_model_params :])
         return self.error_dist()
 
-    def _fitness(self, x, *args):
+    def _fitness(self, x: Sequence[float], *args: Any) -> float:
         model_params = self._params_from_vec(x[: self.n_model_params])
         self.set_params(model_params)
         if not self._check_constraints():
@@ -248,7 +298,29 @@ class ArmaGarch:
         llh = dist.llh(residuals / sigma) - sumjit(np.log(sigma))
         return -llh * LLH_SCALING
 
-    def fit(self, returns, initial_guess, display=True, ftol=OFFSET, maxiter=100):
+    def fit(
+        self,
+        returns: np.ndarray,
+        initial_guess: np.ndarray,
+        display: bool = True,
+        ftol: float = OFFSET,
+        maxiter: int = 100,
+    ) -> OptimizeResult:
+        """Fit the ARMA-GARCH model to financial returns data.
+
+        Args:
+            returns (np.ndarray): Time series of financial returns.
+            initial_guess (np.ndarray): Initial parameter values for optimization.
+            display (bool, optional): Whether to display optimization progress. Defaults to True.
+            ftol (float, optional): Function tolerance for optimization convergence.
+                Defaults to OFFSET.
+            maxiter (int, optional): Maximum number of optimization iterations.
+                Defaults to 100.
+
+        Returns:
+            OptimizeResult: Scipy optimization result object containing fitted parameters
+                and optimization diagnostics.
+        """
         res = minimize(
             self._fitness,
             initial_guess,
