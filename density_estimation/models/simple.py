@@ -15,7 +15,8 @@ def argarch(out, params):
 
     Args:
         out (np.ndarray): Output array to store results.
-        params (np.ndarray): Model parameters [mu, phi, omega, alpha, beta].
+        params (np.ndarray): Array of model parameters mu, phi, omega,
+            alpha, and beta.
 
     Returns:
         np.ndarray: Updated output array with mean and variance columns.

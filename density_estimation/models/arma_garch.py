@@ -116,8 +116,8 @@ class ARMA:
         """Update model parameters.
 
         Args:
-            params (dict[str, float]): Dictionary of parameter names and values.
-                Valid keys are 'phi', 'theta', and 'mu'.
+            params (dict[str, float]): Dictionary of parameter names 
+                and values. Valid keys are 'phi', 'theta', and 'mu'.
         """
         self.params.update(params)
 
@@ -140,7 +140,7 @@ class ARMA:
 
 
 class GARCH:
-    """Generalized Autoregressive Conditional Heteroskedasticity (GARCH) model.
+    """Generalized Autoregressive Conditional Heteroskedasticity model.
 
     Args:
         p (int): Number of lagged residual terms (alpha).
@@ -214,8 +214,10 @@ class ArmaGarch:
     """ARMA(m,n)-GARCH(p,q) model with various error distribution
 
     Args:
-        arma_mn (tuple[int, int]): The orders (m,n) of the ARMA model.
-        garch_pq (tuple[int, int]): The orders (p,q) of the GARCH model.
+        arma_mn (tuple[int, int]): Number of autoregressive (m) and
+            moving average (n) terms.
+        garch_pq (tuple[int, int]): Number of lagged residual (p) and
+            volatility (q) terms.
         error_dist (ConditionalDistribution): The distribution of
             standardized residuals.
 
@@ -244,7 +246,8 @@ class ArmaGarch:
         """Get parameter bounds object for optimization.
 
         Returns:
-            Bounds: Combined bounds for ARMA, GARCH, and error distribution parameters.
+            Bounds: Combined bounds for ARMA, GARCH, and error 
+                distribution parameters.
         """
         lbs = [self.arma.bounds.lb, self.garch.bounds.lb, self.error_dist.bounds.lb]
         ubs = [self.arma.bounds.ub, self.garch.bounds.ub, self.error_dist.bounds.ub]
@@ -268,8 +271,8 @@ class ArmaGarch:
 
         Args:
             params (dict): Dictionary of parameter names and values.
-                Valid keys include ARMA parameters ('phi', 'theta', 'mu')
-                and GARCH parameters ('alpha', 'beta', 'omega').
+                Valid keys include ARMA parameters (phi, theta, mu) and
+                GARCH parameters (alpha, beta, omega).
         """
         arma_params = {k: v for k, v in params.items() if k in self.arma.params}
         garch_params = {k: v for k, v in params.items() if k in self.garch.params}
@@ -310,16 +313,18 @@ class ArmaGarch:
 
         Args:
             returns (np.ndarray): Time series of financial returns.
-            initial_guess (np.ndarray): Initial parameter values for optimization.
-            display (bool, optional): Whether to display optimization progress. Defaults to True.
-            ftol (float, optional): Function tolerance for optimization convergence.
-                Defaults to OFFSET.
-            maxiter (int, optional): Maximum number of optimization iterations.
-                Defaults to 100.
+            initial_guess (np.ndarray): Initial guesses for each of the
+                model and distribution parameters.
+            display (bool, optional): Whether to display optimization
+                progress. Defaults to True.
+            ftol (float, optional): Function tolerance for optimization
+                convergence. Defaults to OFFSET from common.py.
+            maxiter (int, optional): Maximum number of optimization
+                iterations. Defaults to 100.
 
         Returns:
-            OptimizeResult: Scipy optimization result object containing fitted parameters
-                and optimization diagnostics.
+            OptimizeResult: Scipy optimization result object containing
+                fitted parameters and optimization diagnostics.
         """
         res = minimize(
             self._fitness,
