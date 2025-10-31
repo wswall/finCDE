@@ -91,9 +91,12 @@ class ArGarch:
 
     def _fitness(self, x: Sequence[float], *args: Any) -> float:
         returns = args[0]
+        if isinstance(self.error_dist, ConditionalDistribution):
+            dist = self.error_dist
+        else:
+            dist = self._init_dist(x)
         out = np.array([returns, np.repeat(x[2], returns.size)]).T
         fit_data = argarch(out, x[:5])
-        dist = self._init_dist(x)
         sigma = np.sqrt(fit_data[:, 1])
         llh = dist.llh(fit_data[:, 0] / sigma) - sumjit(np.log(sigma))
         return -llh * LLH_SCALING
