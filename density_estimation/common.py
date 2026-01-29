@@ -9,6 +9,9 @@ OFFSET = 1e-8
 LLH_SCALING = 1e-5
 
 
+Array1D = np.ndarray[tuple[int,], np.dtype[np.number]]
+
+
 @njit(f8(f8[:]), fastmath=True)
 def sumjit(array):
     """Numba-accelerated sum for 1D arrays."""
@@ -39,19 +42,20 @@ def calc_rv_d(array, M):
     out = np.empty(T, dtype=np.float64)
     for t in prange(T):
         d_idx = t * M
-        acc = 0.
+        acc = 0.0
         for i in prange(1, M):
             acc += log(array[d_idx + i] / array[d_idx + i - 1]) ** 2
         out[t] = sqrt(acc)
     return out
 
-@njit(f8[:,:](f8[:]), fastmath=True, parallel=True)
+
+@njit(f8[:, :](f8[:]), fastmath=True, parallel=True)
 def calc_rv_mw(rv_d):
     """Numba-accelerated calculation of weekly/monthly realized volatility."""
     T = rv_d.shape[0]
     out = np.empty((T, 2), dtype=np.float64)
     for t in prange(22, T):
-        acc = 0.
+        acc = 0.0
         for m in prange(5):
             acc += rv_d[t - m]
         out[t, 0] = acc / 5.0
@@ -72,16 +76,12 @@ def get_data(taq_data_path: str, M: int = 79) -> np.ndarray[float]:
         np.ndarray: Preprocessed data array.
     """
     df = pd.read_csv(
-        taq_data_path, 
-        engine="pyarrow", 
-        header=None, 
-        skiprows=1, 
-        usecols=(0, 2)
+        taq_data_path, engine="pyarrow", header=None, skiprows=1, usecols=(0, 2)
     )
     T = (df[0].diff() > 0.0).sum() + 1
     data = np.zeros((T, 4), dtype=np.float64)
     prices = df[1].values
-    data[:, 0] = np.log(prices[M - 1::M]/prices[::M])
+    data[:, 0] = np.log(prices[M - 1 :: M] / prices[::M])
     data[:, 1] = calc_rv_d(prices, M)
     data[:, 2:] = calc_rv_mw(data[:, 1])
     return data[22:]

@@ -1,101 +1,46 @@
-from collections.abc import Sequence
+from __future__ import annotations
+from typing import Callable
 
 import numpy as np
-from scipy.optimize import minimize, Bounds, OptimizeResult
+from scipy.optimize import Bounds
 
-from density_estimation.common import sumjit, OFFSET, LLH_SCALING
-from density_estimation.dist import ConditionalDistribution
+from density_estimation.common import Array1D, LLH_SCALING, OFFSET
+from density_estimation.base import ModelSpec, FitData
+from density_estimation.dist import SkewedDistribution, Normal
 
 
-class HarRV:
-    """Heterogeneous Autoregressive Realized Volatility model."""
+class HarRV(ModelSpec):
 
-    def __init__(self, error_dist: ConditionalDistribution):
-        self.params = {"c": 0.0, "beta": np.zeros(3)}
-        self.error_dist = error_dist
-
-    def _init_dist(self, x: Sequence[float]) -> ConditionalDistribution:
-        if self.error_dist.n_params:
-            return self.error_dist(*x[4:])
-        return self.error_dist()
-
-    def set_params(self, x: Sequence[float]) -> None:
-        """Set HAR model parameters from a sequence.
-
-        Args:
-            x (Sequence[float]): Flat array of parameters consisting of
-                constant, RV coefficients, and distribution parameters.
-        """
-        self.params["c"] = x[0]
-        self.params["beta"][:] = x[1:4]
-
-    def calc_var(self, rv_data: np.ndarray) -> np.ndarray:
-        """Calculate the conditional variance from input data.
-
-        Args:
-            rv_data (np.ndarray): Array of T x 3 containing daily, 
-                weekly, and monthly realized volatilities.
-
-        Returns:
-            np.ndarray: The calculated conditional variance.
-        """
-        beta_d, beta_w, beta_m = self.params["beta"]
-        return (
-            self.params["c"]
-            + beta_d * rv_data[:, 0]
-            + beta_w * rv_data[:, 1]
-            + beta_m * rv_data[:, 2]
+    def __init__(self, error_dist=Normal):
+        super().__init__(error_dist)
+        self.bounds = Bounds(
+            lb=np.array([1e-8, -np.inf, -np.inf, -np.inf, *error_dist.bounds.lb]),
+            ub=np.array([np.inf, np.inf, np.inf, np.inf, *error_dist.bounds.ub]),
         )
+        self.constraints = [{"type": "ineq", "fun": lambda x: sum(x[1:4])}]
 
-    def _fitness(self, x: Sequence[float], *args: Any) -> float:
-        data = args[0]
+    def __call__(self, data: np.ndarray, x: Array1D) -> np.ndarray:
+        return x[0] + (x[1:4] * data).sum(axis=1)
+
+    def _get_shape_params(self, x: Array1D):
+        if self.error_dist.n_params == 0:
+            return {"xi": None, "nu": None}
+        if self.error_dist.n_params == 1:
+            if issubclass(self.error_dist, SkewedDistribution):
+                return {"xi": x[-1], "nu": None}
+            return {"xi": None, "nu": x[-1]}
+        return {"xi": x[-2], "nu": x[-1]}
+
+    @property
+    def initial_guess(self):
+        return np.array([OFFSET, 0.36, 0.28, 0.28, *self.error_dist.initial_guess])
+
+    @property
+    def base_step(self):
+        return np.array([5 * OFFSET, 0.1, 0.1, 0.1, *self.error_dist.base_step])
+
+    def make_fit_data(self, data: np.ndarray, x: Array1D) -> FitData:
         returns, rv_dmw = data[1:, 0], data[:-1, 1:]
-        sigma = self.calc_var(rv_dmw)
-        dist = self._init_dist(x)
-        llh = dist.llh(returns / sigma) - sumjit(np.log(sigma))
-        return -llh * LLH_SCALING
-
-    def fit(
-        self,
-        data: np.ndarray,
-        initial_guess: np.ndarray,
-        display: bool = True,
-        ftol: float = OFFSET,
-        maxiter: int = 100,
-    ):
-        """Fit the model to the historic data using MLE.
-
-        Args:
-            data (np.ndarray): Array of shape T X 4 containing the log
-                returns and daily, weekly, and monthly realized
-                volatilities.
-            initial_guess (np.ndarray): Initial guesses for each of the
-                model and distribution parameters.
-            display (bool, optional): Whether to display optimization
-                output. Defaults to True.
-            ftol (float, optional): Tolerance for termination. Defaults
-                to OFFSET in common.py.
-            maxiter (int, optional): Maximum number of iterations.
-                Defaults to 100.
-
-        Returns:
-            OptimizeResult: Scipy optimization result object containing
-                fitted parameters and optimization diagnostics.
-        """
-        bounds = Bounds(
-            lb=np.array([1e-8, -np.inf, -np.inf, -np.inf]), ub=np.repeat(np.inf, 4)
-        )
-        constraints = [{"type": "ineq", "fun": lambda x: sum(x[1:4])}]
-        res = minimize(
-            self._fitness,
-            initial_guess,
-            args=(data,),
-            bounds=bounds,
-            constraints=constraints,
-            method="SLSQP",
-            options={"disp": display},
-        )
-        if res.success:
-            self.set_params(res.x)
-            self.error_dist = self._init_dist(res.x)
-        return res
+        sigma = self(rv_dmw, x)
+        shape_params = self._get_shape_params(x)
+        return FitData(returns, returns, sigma, **shape_params)

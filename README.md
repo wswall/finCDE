@@ -6,22 +6,36 @@ Install requirements
 pip install -r requirements.txt
 ```
 
-To use keras_tuner with tensorflow_probability and tf_keras, copy `assets/config.py` to `keras_tuner/src/backend` in your environment's `python3.*/dist-packages`
+To use keras_tuner with tensorflow_probability and tf_keras, copy `assets/config.py` 
+to `keras_tuner/src/backend` in your environment's `python3.*/dist-packages`
 
 ## Models
 
-Two parametric models are available for estimating conditional mean and variance of log returns. Additionally, a "distributional neural network" is available for estimating location, scale, and shape parameters of a conditional distribution.
+Parametric models are available for estimating conditional mean and variance of log 
+returns. Additionally, a "distributional neural network" is available for estimating 
+location, scale, and shape parameters of a conditional distribution.
 
-### HAR
-`har.py` contains functions to estimate a HAR-RV model under various distributional assumptions. See example usage in `eval.ipynb`
+### Parametric Models
+A `ModelSpec` contains a model specification and the methods needed for fitting its 
+parameters. The `ModelSpec` is subclassed for each parametric model class. The subclassed
+model specifications are located in `models`. Currently, only ARMA(m,n)-GARCH(p,q) and 
+HAR-RV models are implemented in.
 
-### ARMA-GARCH
-`models.arma_garch` provides a class for estimating ARMA(m,n)-GARCH(p,q) models. See example usage in `eval_arma_garch.py`
+The model parameters are fit by calling `Model.fit()` with the data to fit the model to
+and a `ModelSpec`. The `Model` instance initialized with `.fit()` contains the data, the 
+`ModelSpec`, the fitted parameters, and a class `ModelFit` which contains methods for 
+evaluating the fitted model. 
 
-`models.simple` provides a simpler, quicker implementation for AR(1)-GARCH(1,1) models. See example usage in `eval.ipynb`
+The `ModelFactory` class provides a convenient way to fit multiple models of a single 
+class. A `ModelFactory` is initialized with a model class and arguments to be used
+as defaults for the model class. Fitted models can then be constructed by calling 
+`ModelFactory.build()` with the data and any other arguments to be used for the 
+specification. Multiple models can be constructed in parallel by passing a list of
+dictionaries containing data and specification arguments to `ModelFactory.build_many()`,
+with the keyword argument `cpu_count` set to the desired number of parallel processes. 
 
+### Probabilistic Neural Network
 
-### Neural Network 
 `models.nn` adapts code from [Marcjasz et al. (2022)](
 https://doi.org/10.48550/arXiv.2207.02832) to implement a neural network for density estimation. Input data is optionally passed to batch normalization and dropout layers then two fully connected hidden layers. Outputs from the second hidden layer are passed to a separate hidden layer for each parameter in the specified distribution. Outputs from the distribution parameter hidden layers are concatenated and passed to the distribution layer which outputs a TensorFlow distribution. See the [TensorFlow documentation](https://www.tensorflow.org/probability/api_docs/python/tfp/distributions) for details on usage of distribution classes.
 
@@ -31,28 +45,28 @@ The model is constructed by passing a Keras Hyperparameters object and a distrib
 
 ## Distributions
 
-Distributions for parametric models are implemented as classes in `dist.py`. The inputs to these distributions are assumed to be standardized residuals, so the above described parametric models must apply the transformation:  
+Distributions for parametric models are implemented as classes in `dist.py`. The inputs 
+to these distributions are assumed to be standardized residuals, so the above described
+parametric models must apply the transformation:  
 
 $$
 f(r_t;\mu_t, \sigma_t, \eta) = \frac{1}{\sigma_t}\cdot f\left (\frac{r_t - \mu_t}{\sigma_t}; \eta \right)
 $$  
 
-Each distribution defines a density function `.pdf()`, quantile function `.ppf()`, and log-likelihood function `.llh()`. All distribution classes inherit the method `.crps()` which calculates the Continuous Ranked Probability Score using the integral of the Quantile Score from 0 to 1 ([Gneiting and Ranjan 2011](https://www.jstor.org/stable/23243806)).
-
-$$
-\begin{aligned}
-\text{CRPS}(f,y) & = \int^{\infty}_{-\infty}(F(z) - \mathbb{I}[y \le z])^2dz \\
- & = 2\int^1_0 (\mathbb{I}[y \le F^{-1}(\alpha)] - \alpha)(F^{-1}(\alpha) - y)d\alpha   
-\end{aligned}
-$$
+Each distribution defines a density function `.pdf()`, quantile function `.ppf()`, and 
+log-likelihood function `.llh()`
 
 ### Symmetric distributions
 
-`dist.Normal`, `dist.Laplace`, `dist.StudentT` use density and quantile functions from distributions imported from `scipy.stats`. The `.llh()` methods call jit-compiled log-likelihood functions for faster MLE estimation.
+`dist.Normal`, `dist.Laplace`, `dist.StudentT` use density and quantile functions from 
+distributions imported from `scipy.stats`. The `.llh()` methods call jit-compiled 
+log-likelihood functions for faster MLE estimation.
 
 ### Skewed distributions
 
-`dist.CondSNorm`, `dist.CondSLap`, `dist.CondST` add skewness to the corresponding symmetric distribution using [Wurtz et al. (2006)](https://api.semanticscholar.org/CorpusID:17916711) reparametrization of [Fernandez and Steel (1998)](https://doi.org/10.2307/2669632).
+`dist.CondSNorm`, `dist.CondSLap`, `dist.CondST` add skewness to the corresponding 
+symmetric distribution using [Wurtz et al. (2006)](https://api.semanticscholar.org/CorpusID:17916711) reparametrization of 
+[Fernandez and Steel (1998)](https://doi.org/10.2307/2669632).
 
 $$
 \begin{aligned}
@@ -66,7 +80,10 @@ $$
 \end{aligned}
 $$
 
-`dist.CondJsu` uses density and quantile functions adapted from the R package `rugarch` rather than equivalent methods from `scipy.stats`. A jit-compiled log-likelihood function has not been implemented for this distribution, but is intended to be added in the future. Instead, `.llh()` sums the log of the values returned by its `.pdf()` method.  
+`dist.CondJsu` uses density and quantile functions adapted from the R package `rugarch`
+rather than equivalent methods from `scipy.stats`. A jit-compiled log-likelihood function
+has not been implemented for this distribution, but is intended to be added in the 
+future. Instead, `.llh()` sums the log of the values returned by its `.pdf()` method.  
 
 $$
 f(z_t; \xi, \lambda, \gamma, \delta) = 
@@ -94,40 +111,16 @@ $$
 <br>
 
 ## Future Development
-1. #### Refactor HAR into model class
-2. #### Create a class to be returned from model fit storing residuals, params, llh, and distribution which provides methods for model evaluation
-    - Standard errors  
-    - Significance
-    - Ljung-Box and Breusch-Godfrey tests
-    - ARCH-LM test
-    - Jarque-Bera or Kolmogorov-Smirnov tests
-    - AIC and BIC
 
-3. #### Evaluate against results from other packages for obvious discrepancies
+Implement VaR and expected shortfall from estimated densities
 
-4. #### Implement a "brute-force" approach to GARCH and HAR with time varying shape
-    - Create a method which calls a new model fit at each forecast step
-    - Provide option to choose parameters to hold constant
-
-5. #### Implement conditional skew/kurtosis  
-    - GARCH references:
-        - Hansen 1994  
-        - Harvey and Siddique 1999  
-        - Jondeau and Rockinger 2003  
-        - Leon et al. 2005  
-    - HAR references:
-        - Amaya et al. 2013
-        - Mei et al. 2016
-
----
-
-#### Implement additional models  
-- HEAVY
-- Other GARCH family models
-- Other HAR family models
+Implement additional models  
+- ARCD model of Hansen (1994)
+- GARCHS model of Harvey and Siddique (1999)
+- GARCHSK model of Leon et al. (2005)
+- HEAVY model of Shephard and Shephard (2009)
+- Other GARCH/HAR family models
 - Other Neural network architectures (beneath param/distribution layers)
     - Kim and Won 2018
     - Benitez et al 2021
     - Barunik et al 2024
-
-#### Implement VaR and expected shortfall from estimated densities

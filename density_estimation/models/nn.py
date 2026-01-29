@@ -97,7 +97,7 @@ def _make_dense(
     )
 
 
-def build_model(hp: HyperParameters, dist_name: str = "normal", input_dim: int = 3):
+def build_prob_nn(hp: HyperParameters, dist_name: str = "normal", input_dim: int = 3):
     """Builds a probabilistic neural network model using Keras and TensorFlow Probability.
 
     Args:
