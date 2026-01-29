@@ -9,7 +9,7 @@ import numpy as np
 from numpy.typing import NDArray, ArrayLike
 from scipy.integrate import tanhsinh
 from scipy.stats import norm
-from scipy.optimize import Bounds, minimize, OptimizeResult
+from scipy.optimize import minimize, OptimizeResult
 from statsmodels.stats.diagnostic import acorr_ljungbox, het_arch
 from statsmodels.stats.stattools import jarque_bera
 
@@ -72,37 +72,102 @@ class FitData:
 
 
 class ModelSpec(metaclass=ABCMeta):
+    """Abstract base class for model specifications.
+
+    Implementations define the conditional mean/volatility dynamics and
+    how to construct fit-time data for a given error distribution.
+
+    Attributes:
+        error_dist (type): Distribution class used to model standardized errors.
+        bounds (Sequence[tuple[float, float]] | None): Optional parameter bounds
+            used by optimizers.
+        constraints (Sequence | None): Optional optimizer constraints.
+    """
 
     def __init__(self, dist_class):
+        """Initialize the model specification.
+
+        Args:
+            dist_class (type): Distribution class that will be instantiated
+                with a ``FitData`` object during fitting/scoring.
+        """
         self.error_dist = dist_class
         self.bounds = None
         self.constraints = None
 
     @abstractmethod
     def __call__(self, data: np.ndarray, x: Array1D) -> np.ndarray:
+        """Compute the model-implied series for the given parameters.
+
+        Args:
+            data (np.ndarray): Input data used by the model.
+            x (Array1D): Parameter vector.
+
+        Returns:
+            np.ndarray: Model-implied series (e.g., mean/volatility output).
+        """
         raise NotImplementedError
 
     @property
     @abstractmethod
     def initial_guess(self) -> np.ndarray:
+        """Provide a default parameter initialization.
+
+        Returns:
+            np.ndarray: Initial parameter vector.
+        """
         raise NotImplementedError
 
     @property
     @abstractmethod
     def base_step(self) -> np.ndarray:
+        """Provide base step sizes for numerical differentiation.
+
+        Returns:
+            np.ndarray: Step sizes aligned with the parameter vector.
+        """
         raise NotImplementedError
 
     @abstractmethod
     def make_fit_data(self, data: np.ndarray, x: Array1D) -> FitData:
+        """Construct fit data required by the error distribution.
+
+        Args:
+            data (np.ndarray): Input data used by the model.
+            x (Array1D): Parameter vector.
+
+        Returns:
+            FitData: Residuals, volatility, and optional shape parameters.
+        """
         raise NotImplementedError
 
     def score(self, x: Array1D, *args) -> Array1D:
+        """Compute per-observation negative log-density scores.
+
+        Args:
+            x (Array1D): Parameter vector.
+            *args: Positional arguments where the first item is the data
+                array used by ``make_fit_data``.
+
+        Returns:
+            Array1D: Negative log-density contributions for each observation.
+        """
         data = args[0]
         fit_data = self.make_fit_data(data, x)
         error_dist = self.error_dist(fit_data)
         return -(np.log(error_dist.pdf()) - np.log(fit_data.sigma))
 
     def fitness(self, x: Array1D, *args) -> float:
+        """Compute the scaled negative log-likelihood objective.
+
+        Args:
+            x (Array1D): Parameter vector.
+            *args: Positional arguments where the first item is the data
+                array used by ``make_fit_data``.
+
+        Returns:
+            float: Scaled negative log-likelihood for optimization.
+        """
         data = args[0]
         fit_data = self.make_fit_data(data, x)
         error_dist = self.error_dist(fit_data)
@@ -117,28 +182,19 @@ class ModelFit:
         result: OptimizeResult,
         fit_data: FitData,
         error_dist,
-        jacobian: Callable,
-        hessian: Callable,
+        jacobian_func: Callable,
+        hess_func: Callable,
     ):
         self.result = result
         self.fit_data = fit_data
         self.error_dist = error_dist
-        self.jacobian_func = jacobian
-        self.hess_func = hessian
+        self.jacobian = jacobian_func(result.x) / LLH_SCALING
+        self.hessian = hess_func(result.x) / LLH_SCALING
 
     @cached_property
     def log_likelihood(self) -> float:
         """Log-likelihood of the fitted model."""
         return -(self.result.fun / LLH_SCALING)
-
-    @cached_property
-    def hessian(self) -> np.ndarray:
-        """Evaluate the Hessian of the fitted model."""
-        return self.hess_func(self.result.x) / LLH_SCALING
-
-    @cached_property
-    def jacobian(self) -> np.ndarray:
-        return self.jacobian_func(self.result.x) / LLH_SCALING
 
     def aic(self) -> float:
         """Calculate the Akaike Information Criterion (AIC)."""
@@ -227,6 +283,23 @@ class ModelFit:
 
 
 class Model:
+    """Fitted model container with parameters and diagnostics.
+
+    Stores the fitted parameters, derived fit data, and diagnostics
+    (e.g., log-likelihood, AIC/BIC) produced during optimization.
+
+    Args:
+        model_spec (ModelSpec): Model specification used for fitting.
+        fit_data (FitData): Fit data derived from the input series.
+        parameters (np.ndarray): Estimated parameter vector.
+        model_fit (ModelFit): Diagnostics and test utilities for the fit.
+
+    Attributes:
+        spec (ModelSpec): Model specification used for fitting.
+        data (FitData): Fit data derived from the input series.
+        parameters (np.ndarray): Estimated parameter vector.
+        evaluate (ModelFit): Diagnostics and test utilities for the fit.
+    """
 
     def __init__(self, model_spec, fit_data, parameters, model_fit):
         self.spec = model_spec
@@ -243,19 +316,15 @@ class Model:
         ftol: float = OFFSET,
         maxiter: int = 100,
     ):
-        """Fits the model to the given returns data using maximum likelihood.
+        """Fit the model to data using maximum likelihood.
 
         The optimization is performed using the Sequential Least Squares
         Programming (SLSQP) method. If the optimization is successful,
-        the model parameters are updated, and the error distribution is
-        initialized.
+        the model parameters are updated and diagnostics are computed.
 
         Args:
-            data (np.ndarray[float]): The observed returns data to fit
-                the model to.
-            initial_guess (np.ndarray[float]): Initial guess for the
-                optimization parameters.
-            model_spec (ModelSpec): The specification of the model to be fitted.
+            data (np.ndarray[float]): Observed data to fit the model to.
+            model_spec (ModelSpec): Specification of the model to be fitted.
             display (bool, optional): Whether to display optimization
                 progress. Defaults to True.
             ftol (float, optional): The tolerance for termination by the
@@ -264,7 +333,8 @@ class Model:
                 the optimizer. Defaults to 100.
 
         Returns:
-            OptimizeResult: The result of the optimization process.
+            Model | OptimizeResult: A fitted ``Model`` when optimization
+                succeeds; otherwise the raw optimizer result.
         """
         result = minimize(
             model_spec.fitness,
@@ -292,8 +362,23 @@ class Model:
 
 
 class ModelFactory:
+    """Factory for building models from a specification class.
+
+    Handles spec initialization defaults and supports building many
+    models in parallel from configuration dictionaries.
+
+    Attributes:
+        model_class (type): Model specification class to instantiate.
+        defaults (dict): Default keyword arguments for spec construction.
+    """
 
     def __init__(self, model_class, **kwargs):
+        """Initialize the factory.
+
+        Args:
+            model_class (type): Model specification class to instantiate.
+            **kwargs: Default keyword arguments for spec construction.
+        """
         self.model_class = model_class
         self.defaults = kwargs or {}
 
@@ -303,6 +388,15 @@ class ModelFactory:
 
     @staticmethod
     def _extract_kw_args(kw_list, **kwargs):
+        """Split kwargs into spec args and fit args.
+
+        Args:
+            kw_list (Sequence[str]): Keys to extract into a separate dict.
+            **kwargs: Input keyword arguments.
+
+        Returns:
+            tuple[dict, dict]: Remaining kwargs and extracted kwargs.
+        """
         extracted = {}
         for key in kw_list:
             if key in kwargs:
@@ -310,6 +404,16 @@ class ModelFactory:
         return kwargs, extracted
 
     def build(self, data, **kwargs):
+        """Build and fit a model from data and configuration kwargs.
+
+        Args:
+            data (np.ndarray): Input data to fit the model to.
+            **kwargs: Spec configuration plus optional fit args
+                (display, ftol, maxiter).
+
+        Returns:
+            Model | OptimizeResult: Fitted model or raw optimizer result.
+        """
         spec_args, fit_args = self._extract_kw_args(
             ["display", "ftol", "maxiter"], **kwargs
         )
@@ -321,6 +425,18 @@ class ModelFactory:
         return self.build(data, **config)
 
     def build_many(self, config_list, proc_count=1):
+        """Build and fit multiple models from a list of configs.
+
+        Args:
+            config_list (Sequence[dict]): Each dict must include ``data`` and
+                any spec/fit args for ``build``.
+            proc_count (int, optional): Number of processes to use. Defaults
+                to 1 (no multiprocessing).
+
+        Returns:
+            list[Model | OptimizeResult]: List of fitted models or optimizer
+                results corresponding to the input configs.
+        """
         # Method to build multiple models in parallel
         if proc_count > 1:
             with Pool(proc_count) as p:
