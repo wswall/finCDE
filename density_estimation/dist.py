@@ -22,6 +22,7 @@ __all__ = [
     "SkewLaplace",
     "SkewT",
     "JohnsonSU",
+    "jsu_constraint",
 ]
 
 
@@ -181,9 +182,9 @@ class SkewedDistribution(Distribution):
     """
 
     n_params = 1
-    bounds = Bounds(lb=[1e-8], ub=[np.inf])
+    bounds = Bounds(lb=[1e-5], ub=[np.inf])
     initial_guess = np.array([0.8])
-    base_step = np.array([0.1])
+    base_step = np.array([1e-6])
 
     def __init__(self, params: FitData, base_dist: SymmetricDistribution, m1: float):
         super().__init__(params)
@@ -266,9 +267,9 @@ class SkewT(SkewedDistribution):
 
     name = "skewt"
     n_params = 2
-    bounds = Bounds(lb=[1e-8, 2 + 1e-8], ub=[np.inf, 60.0])
+    bounds = Bounds(lb=[1e-5, 2 + 1e-8], ub=[np.inf, 60.0])
     initial_guess = np.array([0.8, 4 + OFFSET])
-    base_step = np.array([0.1, 1.0])
+    base_step = np.array([1e-6, 1.0])
 
     def __init__(self, params):
         betafn = (gamma(0.5) / gamma(0.5 + params.nu / 2.0)) * gamma(params.nu / 2.0)
@@ -276,12 +277,16 @@ class SkewT(SkewedDistribution):
         super().__init__(params, StudentT(params), m1)
 
 
+def jsu_constraint(x: ArrayLike) -> float:
+    return np.abs(x[-2]) - OFFSET
+
+
 class JohnsonSU(Distribution):
     """Johnson's SU distribution for use with standardized residuals"""
 
     name = "jsu"
     n_params = 2
-    bounds = Bounds(lb=[-20, 0.1], ub=[20, 10])
+    bounds = Bounds(lb=[-20, 0.25], ub=[20, 10])
     initial_guess = np.array([1.0, 1.0])
     base_step = np.array([0.5, 0.5])
 

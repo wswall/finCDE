@@ -9,7 +9,7 @@ from scipy.optimize import Bounds
 
 from density_estimation.base import ModelSpec, FitData
 from density_estimation.common import OFFSET, Array1D
-from density_estimation.dist import Distribution, SkewedDistribution, Normal
+from density_estimation.dist import Distribution, SkewedDistribution, Normal, jsu_constraint
 
 
 param_dict_sig = types.DictType(types.unicode_type, types.float64[:])
@@ -176,13 +176,14 @@ class ArmaGarch(ModelSpec):
         if phi.size == 1:
             return 1 - OFFSET - np.abs(phi[0])
         if phi.size == 2:
-            return np.array(
-                [1 - OFFSET - np.abs(phi[0] + phi[1]), 1 - OFFSET - np.abs(phi[1])]
-            )
+            return np.min([
+                1 - OFFSET - np.abs(phi[0] + phi[1]),
+                1 - OFFSET - np.abs(phi[1])
+            ])
         if np.all(phi == 0):
-            return np.array([-1.0])
+            return -1.0
         ar_char_poly = poly.Polynomial(-np.array([-1, *phi]))
-        return np.abs(ar_char_poly.roots()) - 1.0 - OFFSET
+        return np.min(np.abs(ar_char_poly.roots())) - 1.0 - OFFSET
 
     def _garch_stationarity(self, x: Array1D):
         alpha, beta = x[self._vec_slices["alpha"]], x[self._vec_slices["beta"]]
@@ -191,7 +192,7 @@ class ArmaGarch(ModelSpec):
         alpha_poly = poly.Polynomial(-np.array([-1, *alpha]))
         beta_poly = poly.Polynomial(np.array([0, *beta]))
         char_poly = alpha_poly - beta_poly
-        return np.abs(char_poly.roots()) - 1.0 - OFFSET
+        return np.min(np.abs(char_poly.roots())) - 1.0 - OFFSET
 
     def _garch_fourth_moment(self, x: Array1D) -> np.ndarray:
         alpha, beta = x[self._vec_slices["alpha"]], x[self._vec_slices["beta"]]
@@ -205,6 +206,8 @@ class ArmaGarch(ModelSpec):
         ]
         if np.all(self.order[1] == 1):
             constraints.append({"type": "ineq", "fun": self._garch_fourth_moment})
+        if self.error_dist.__name__ == "JohnsonSU":
+            constraints.append({"type": "ineq", "fun": jsu_constraint})
         return constraints
 
     def _get_shape_params(self, x: Array1D):
@@ -218,6 +221,6 @@ class ArmaGarch(ModelSpec):
 
     def make_fit_data(self, data, x):
         pred_vals = self(data, x)
-        residuals, sigma = pred_vals[:, 0], np.sqrt(pred_vals[:, 1])
+        sigma = np.sqrt(np.maximum(1e-6, pred_vals[:, 1]))
         shape_params = self._get_shape_params(x)
-        return FitData(data, residuals, sigma, **shape_params)
+        return FitData(data, pred_vals[:, 0], sigma, **shape_params)

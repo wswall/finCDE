@@ -4,23 +4,35 @@ from typing import Callable
 import numpy as np
 from scipy.optimize import Bounds
 
-from density_estimation.common import Array1D, LLH_SCALING, OFFSET
+from density_estimation.common import Array1D, OFFSET
 from density_estimation.base import ModelSpec, FitData
-from density_estimation.dist import SkewedDistribution, Normal
+from density_estimation.dist import SkewedDistribution, Normal, jsu_constraint
 
 
 class HarRV(ModelSpec):
 
     def __init__(self, error_dist=Normal):
         super().__init__(error_dist)
-        self.bounds = Bounds(
-            lb=np.array([1e-8, -np.inf, -np.inf, -np.inf, *error_dist.bounds.lb]),
-            ub=np.array([np.inf, np.inf, np.inf, np.inf, *error_dist.bounds.ub]),
-        )
-        self.constraints = [{"type": "ineq", "fun": lambda x: sum(x[1:4])}]
+        self.bounds = self._make_bounds()
+        self.constraints = self._make_constraints()
 
     def __call__(self, data: np.ndarray, x: Array1D) -> np.ndarray:
         return x[0] + (x[1:4] * data).sum(axis=1)
+
+    def _make_bounds(self) -> Bounds:
+        return Bounds(
+            lb=np.array([1e-8, 0, 0, 0, *self.error_dist.bounds.lb]),
+            ub=np.array([np.inf, np.inf, np.inf, np.inf, *self.error_dist.bounds.ub]),
+        )
+
+    def _stationarity(self, x) -> float:
+        return 1 - OFFSET - sum(x[1:4])
+
+    def _make_constraints(self) -> list[dict[str, Callable]]:
+        constraints = [{"type": "ineq", "fun": self._stationarity}]
+        if self.error_dist.__name__ == "JohnsonSU":
+            constraints.append({"type": "ineq", "fun": jsu_constraint})
+        return constraints
 
     def _get_shape_params(self, x: Array1D):
         if self.error_dist.n_params == 0:
