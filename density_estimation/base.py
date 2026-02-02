@@ -108,9 +108,8 @@ class ModelSpec(metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    @property
     @abstractmethod
-    def initial_guess(self) -> np.ndarray:
+    def make_initial_guess(self, data) -> np.ndarray:
         """Provide a default parameter initialization.
 
         Returns:
@@ -338,7 +337,7 @@ class Model:
         """
         result = minimize(
             model_spec.fitness,
-            model_spec.initial_guess,
+            model_spec.make_initial_guess(data),
             args=(data,),
             method="SLSQP",
             bounds=model_spec.bounds,

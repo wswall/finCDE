@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 
-OFFSET = 1e-8
+OFFSET = 1e-6
 LLH_SCALING = 1e-5
 
 

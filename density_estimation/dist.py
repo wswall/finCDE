@@ -183,7 +183,7 @@ class SkewedDistribution(Distribution):
 
     n_params = 1
     bounds = Bounds(lb=[1e-5], ub=[np.inf])
-    initial_guess = np.array([0.8])
+    initial_guess = np.array([1])
     base_step = np.array([1e-6])
 
     def __init__(self, params: FitData, base_dist: SymmetricDistribution, m1: float):

@@ -43,9 +43,9 @@ class HarRV(ModelSpec):
             return {"xi": None, "nu": x[-1]}
         return {"xi": x[-2], "nu": x[-1]}
 
-    @property
-    def initial_guess(self):
-        return np.array([OFFSET, 0.36, 0.28, 0.28, *self.error_dist.initial_guess])
+    def make_initial_guess(self, data):
+        sample_var = np.var(data[:, 0], ddof=1)
+        return np.array([sample_var, 0.36, 0.28, 0.28, *self.error_dist.initial_guess])
 
     @property
     def base_step(self):

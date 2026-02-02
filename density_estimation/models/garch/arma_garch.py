@@ -2,79 +2,20 @@ from __future__ import annotations
 
 from typing import Literal, Callable
 
-from numba import njit, prange, f8, typed, types
 import numpy as np
 from numpy.polynomial import polynomial as poly
 from scipy.optimize import Bounds
+from statsmodels.regression.linear_model import yule_walker
 
 from density_estimation.base import ModelSpec, FitData
 from density_estimation.common import OFFSET, Array1D
-from density_estimation.dist import Distribution, SkewedDistribution, Normal, jsu_constraint
-
-
-param_dict_sig = types.DictType(types.unicode_type, types.float64[:])
-
-
-@njit(f8[:, :](f8[:], param_dict_sig), fastmath=True)
-def calc_armagarch(returns, params):
-    mu, phi, theta = params["mu"][0], params["phi"], params["theta"]
-    omega, alpha, beta = params["omega"][0], params["alpha"], params["beta"]
-    order = np.array([[phi.size, theta.size], [alpha.size, beta.size]])
-    output = np.empty((returns.shape[0], 2), dtype=np.float64)
-    y_init = mu / (1.0 - phi.sum() - theta.sum())
-    output[0, 0] = returns[0] - mu - phi.sum() * y_init
-    for i in range(1, order.max()):
-        y_pred = mu
-        for n in prange(phi.size):
-            if n < i:
-                y_pred += phi[n] * returns[i - 1 - n]
-            else:
-                y_pred += phi[n] * y_init
-        for n in prange(theta.size):
-            if n < i:
-                y_pred += theta[n] * output[i - 1 - n, 0]
-        output[i, 0] = returns[i] - y_pred
-    output[: order.max(), 1] = omega / (1.0 - alpha.sum() - beta.sum())
-    for i in range(order.max(), returns.shape[0]):
-        y_pred = mu
-        var_pred = omega
-        for n in prange(phi.size):
-            y_pred += phi[n] * returns[i - 1 - n]
-        for n in prange(theta.size):
-            y_pred += theta[n] * output[i - 1 - n, 0]
-        for n in prange(alpha.size):
-            var_pred += alpha[n] * output[i - 1 - n, 0] ** 2
-        for n in prange(beta.size):
-            var_pred += beta[n] * output[i - 1 - n, 1]
-        output[i, 0] = returns[i] - y_pred
-        output[i, 1] = var_pred
-    return output
-
-
-@njit(f8[:, :](f8[:], param_dict_sig), fastmath=True)
-def calc_1111(returns, params):
-    mu, phi, theta = params["mu"][0], params["phi"][0], params["theta"][0]
-    omega, alpha, beta = params["omega"][0], params["alpha"][0], params["beta"][0]
-    output = np.zeros((returns.shape[0], 2), dtype=np.float64)
-    output[0, 0] = returns[0] - mu - phi * mu / (1.0 - phi - theta)
-    output[0, 1] = omega / (1.0 - alpha - beta)
-    for i in range(1, returns.shape[0]):
-        output[i, 0] = returns[i] - mu - phi * returns[i - 1] - theta * output[i - 1, 0]
-        output[i, 1] = omega + alpha * output[i - 1, 0] ** 2 + beta * output[i - 1, 1]
-    return output
-
-
-@njit(f8[:, :](f8[:], param_dict_sig), fastmath=True)
-def calc_1011(returns, params):
-    mu, phi = params["mu"][0], params["phi"][0]
-    omega, alpha, beta = params["omega"][0], params["alpha"][0], params["beta"][0]
-    output = np.zeros((returns.shape[0], 2), dtype=np.float64)
-    output[0, 0] = returns[0] - mu - phi * mu / (1.0 - phi)
-    output[0, 1] = omega / (1.0 - alpha - beta)
-    for i in range(1, returns.shape[0]):
-        output[i, 0] = returns[i] - mu - phi * returns[i - 1]
-        output[i, 1] = omega + alpha * output[i - 1, 0] ** 2 + beta * output[i - 1, 1]
-    return output
+from density_estimation.dist import (
+    Distribution,
+    SkewedDistribution,
+    Normal,
+    jsu_constraint,
+)
+from density_estimation.models.garch import functions as gfunc
 
 
 class ArmaGarch(ModelSpec):
@@ -94,19 +35,45 @@ class ArmaGarch(ModelSpec):
         self.constraints = self._make_constraints()
         # Slices to recover params from vector during optimization
         self._vec_slices = self._make_slice_dict()
-        self._set_call_func()
+        self._arma_eq = self._get_arma_eq()
+        self._garch_eq = self._get_garch_eq()
 
     def __call__(self, data: Array1D, x: Array1D):
-        return calc_armagarch(data, self.vec_to_parameters(x))
+        params = self.param_vec_to_dict(x)
+        residuals = self._arma_eq(
+            data, data.mean(), params["mu"][0], params["phi"], params["theta"]
+        )
+        variance = self._garch_eq(
+            residuals,
+            data.var(ddof=1),
+            params["omega"][0],
+            params["alpha"],
+            params["beta"],
+        )
+        return np.column_stack((residuals, variance))
 
-    @property
-    def initial_guess(self):
+    def _get_arma_eq(self):
+        if self.arma_order == (1, 0):
+            return gfunc.calc_ar_1
+        if self.arma_order[0] > 1 and self.arma_order[1] == 0:
+            return gfunc.calc_ar_m
+        if self.arma_order == (1, 1):
+            return gfunc.calc_arma_11
+        return gfunc.calc_arma_mn
+
+    def _get_garch_eq(self):
+        if self.garch_order == (1, 1):
+            return gfunc.calc_garch_11
+        return gfunc.calc_garch_pq
+
+    def make_initial_guess(self, data):
+        ar_initial = yule_walker(data, order=self.arma_order[0])[0]
         return np.array(
             [
-                1e-3,
-                *np.repeat(OFFSET, self.arma_order[0]),
-                *np.repeat(OFFSET, self.arma_order[1]),
-                1e-5,
+                (1 - ar_initial.sum()) * np.mean(data),
+                *ar_initial,
+                *np.repeat(-0.1, self.arma_order[1]),
+                0.05 * np.var(data, ddof=1),
                 *np.repeat(0.05 / self.garch_order[0], self.garch_order[0]),
                 *np.repeat(0.9 / self.garch_order[1], self.garch_order[1]),
                 *self.error_dist.initial_guess,
@@ -127,14 +94,6 @@ class ArmaGarch(ModelSpec):
             ]
         )
 
-    def _set_call_func(self):
-        if self.arma_order == (1, 0) and self.garch_order == (1, 1):
-            self._call_func = calc_1011
-        if self.arma_order == (1, 1) and self.garch_order == (1, 1):
-            self._call_func = calc_1111
-        else:
-            self._call_func = calc_armagarch
-
     @property
     def order(self) -> np.ndarray[tuple[Literal[2], Literal[2]], np.dtype[np.int_]]:
         """Return the order of the ARMA and GARCH parts."""
@@ -153,10 +112,8 @@ class ArmaGarch(ModelSpec):
             "beta": slice(1 + n_arma_terms + order[1, 0], n_model_terms),
         }
 
-    def vec_to_parameters(self, x: Array1D) -> types.DictType:
-        d = typed.Dict.empty(key_type=types.unicode_type, value_type=types.float64[:])
-        d.update({param: x[slc] for param, slc in self._vec_slices.items()})
-        return d
+    def param_vec_to_dict(self, x: Array1D) -> dict[str, np.ndarray]:
+        return {param: x[slc] for param, slc in self._vec_slices.items()}
 
     def _make_bounds(self) -> Bounds:
         arma_bound = np.repeat(np.inf, self.order[0].sum())
@@ -167,45 +124,37 @@ class ArmaGarch(ModelSpec):
             ub=[np.inf, *arma_bound, np.inf, *garch_high, *self.error_dist.bounds.ub],
         )
 
-    def _arma_moment(self, x: Array1D):
-        phi, theta = x[self._vec_slices["phi"]], x[self._vec_slices["theta"]]
-        return np.abs(1 - (phi.sum() + theta.sum()))
-
     def _ar_stationarity(self, x: Array1D):
         phi = x[self._vec_slices["phi"]]
         if phi.size == 1:
             return 1 - OFFSET - np.abs(phi[0])
         if phi.size == 2:
-            return np.min([
-                1 - OFFSET - np.abs(phi[0] + phi[1]),
-                1 - OFFSET - np.abs(phi[1])
-            ])
-        if np.all(phi == 0):
+            return np.min(
+                [1 - OFFSET - np.abs(phi[0] + phi[1]), 1 - OFFSET - np.abs(phi[1])]
+            )
+        char_poly = poly.Polynomial(-np.array([-1, *phi]))
+        abs_roots = np.abs(char_poly.roots())
+        if abs_roots.size == 0:
             return -1.0
-        ar_char_poly = poly.Polynomial(-np.array([-1, *phi]))
-        return np.min(np.abs(ar_char_poly.roots())) - 1.0 - OFFSET
+        return np.min(abs_roots) - 1.0 - OFFSET
 
     def _garch_stationarity(self, x: Array1D):
         alpha, beta = x[self._vec_slices["alpha"]], x[self._vec_slices["beta"]]
         if alpha.size == 1 and beta.size == 1:
-            return 1 - OFFSET - np.abs(alpha + beta)
-        alpha_poly = poly.Polynomial(-np.array([-1, *alpha]))
-        beta_poly = poly.Polynomial(np.array([0, *beta]))
-        char_poly = alpha_poly - beta_poly
-        return np.min(np.abs(char_poly.roots())) - 1.0 - OFFSET
-
-    def _garch_fourth_moment(self, x: Array1D) -> np.ndarray:
-        alpha, beta = x[self._vec_slices["alpha"]], x[self._vec_slices["beta"]]
-        return 1.0 - OFFSET - (3 * alpha**2 + 2 * (alpha + beta) + beta**2.0)
+            return 1 - OFFSET - np.abs(alpha[0] + beta[0])
+        char_poly = poly.Polynomial(-np.array([-1, *alpha])) - poly.Polynomial(
+            np.array([0, *beta])
+        )
+        abs_roots = np.abs(char_poly.roots())
+        if abs_roots.size == 0:
+            return -1.0
+        return np.min(abs_roots) - 1.0 - OFFSET
 
     def _make_constraints(self) -> list[dict[str, Callable]]:
         constraints = [
             {"type": "ineq", "fun": self._ar_stationarity},
-            {"type": "ineq", "fun": self._arma_moment},
             {"type": "ineq", "fun": self._garch_stationarity},
         ]
-        if np.all(self.order[1] == 1):
-            constraints.append({"type": "ineq", "fun": self._garch_fourth_moment})
         if self.error_dist.__name__ == "JohnsonSU":
             constraints.append({"type": "ineq", "fun": jsu_constraint})
         return constraints
@@ -221,6 +170,6 @@ class ArmaGarch(ModelSpec):
 
     def make_fit_data(self, data, x):
         pred_vals = self(data, x)
-        sigma = np.sqrt(np.maximum(1e-6, pred_vals[:, 1]))
+        sigma = np.sqrt(np.maximum(1e-8, pred_vals[:, 1]))
         shape_params = self._get_shape_params(x)
         return FitData(data, pred_vals[:, 0], sigma, **shape_params)
