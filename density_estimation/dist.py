@@ -21,8 +21,7 @@ __all__ = [
     "SkewNorm",
     "SkewLaplace",
     "SkewT",
-    "JohnsonSU",
-    "jsu_constraint",
+    "JohnsonSU"
 ]
 
 
@@ -194,7 +193,7 @@ class SkewedDistribution(Distribution):
         self.mu_xi = self._calc_mu_xi(m1)
         self.sigma_xi = self._calc_sigma_xi(m1)
         z_xi = self.params.z * self.sigma_xi + self.mu_xi
-        self.skew_z = z_xi / self.params.xi ** np.sign(z_xi)
+        self.params.z = z_xi / self.params.xi ** np.sign(z_xi)
 
     def _validate_xi(self):
         if self.params.xi is None:
@@ -225,7 +224,7 @@ class SkewedDistribution(Distribution):
         return (-np.sign(z) * ppf - self.mu_xi) / self.sigma_xi
 
     def pdf(self) -> ArrayLike:
-        return self.g * self.base_dist.pdf() * self.sigma_xi
+        return self.g * self.sigma_xi * self.base_dist.pdf()
 
     def llh(self) -> float:
         if not self.params.conditional_skew:
@@ -277,17 +276,13 @@ class SkewT(SkewedDistribution):
         super().__init__(params, StudentT(params), m1)
 
 
-def jsu_constraint(x: ArrayLike) -> float:
-    return np.abs(x[-2]) - OFFSET
-
-
 class JohnsonSU(Distribution):
     """Johnson's SU distribution for use with standardized residuals"""
 
     name = "jsu"
     n_params = 2
-    bounds = Bounds(lb=[-20, 0.25], ub=[20, 10])
-    initial_guess = np.array([1.0, 1.0])
+    bounds = Bounds(lb=[-10, 0.5], ub=[10, 50])
+    initial_guess = np.array([0.0, 2.0])
     base_step = np.array([0.5, 0.5])
 
     def __init__(self, params):
