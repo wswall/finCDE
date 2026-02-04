@@ -12,8 +12,7 @@ from density_estimation.common import OFFSET, Array1D
 from density_estimation.dist import (
     Distribution,
     SkewedDistribution,
-    Normal,
-    jsu_constraint,
+    Normal
 )
 from density_estimation.models.garch import functions as gfunc
 
@@ -31,12 +30,12 @@ class ArmaGarch(ModelSpec):
         self.garch_order = garch_order
         if np.any(self.order < 0):
             raise ValueError("All ARMA and GARCH order terms must be nonnegative")
-        self.bounds = self._make_bounds()
-        self.constraints = self._make_constraints()
         # Slices to recover params from vector during optimization
         self._vec_slices = self._make_slice_dict()
         self._arma_eq = self._get_arma_eq()
         self._garch_eq = self._get_garch_eq()
+        self.bounds = self._make_bounds()
+        self.constraints = self._make_constraints()
 
     def __call__(self, data: Array1D, x: Array1D):
         params = self.param_vec_to_dict(x)
@@ -51,6 +50,13 @@ class ArmaGarch(ModelSpec):
             params["beta"],
         )
         return np.column_stack((residuals, variance))
+
+    def __getstate__(self):
+        # Constraint callables are lambdas and not picklable for multiprocessing
+        state = self.__dict__.copy()
+        if "constraints" in state:
+            del state["constraints"]
+        return state
 
     def _get_arma_eq(self):
         if self.arma_order == (1, 0):
@@ -115,48 +121,72 @@ class ArmaGarch(ModelSpec):
     def param_vec_to_dict(self, x: Array1D) -> dict[str, np.ndarray]:
         return {param: x[slc] for param, slc in self._vec_slices.items()}
 
+    def _phi_bound(self):
+        if self.arma_order[0] == 1:
+            bound = np.array([1 - OFFSET])
+        elif self.arma_order[0] == 2:
+            bound = np.array([np.inf, 1 - OFFSET])
+        else:
+            bound = np.repeat(np.inf, self.order[0, 0])
+        return -bound, bound
+
+    def _theta_bound(self):
+        if self.arma_order[1] == 1:
+            bound = np.array([1 - OFFSET])
+        elif self.arma_order[1] == 2:
+            bound = np.array([np.inf, 1 - OFFSET])
+        else:
+            bound = np.repeat(np.inf, self.order[0,1])
+        return -bound, bound
+
     def _make_bounds(self) -> Bounds:
-        arma_bound = np.repeat(np.inf, self.order[0].sum())
+        phi_lb, phi_ub = self._phi_bound()
+        theta_lb, theta_ub = self._theta_bound()
         garch_low = np.repeat(0.0, self.order[1].sum())
         garch_high = np.repeat(np.inf, self.order[1].sum())
         return Bounds(
-            lb=[-np.inf, *-arma_bound, OFFSET, *garch_low, *self.error_dist.bounds.lb],
-            ub=[np.inf, *arma_bound, np.inf, *garch_high, *self.error_dist.bounds.ub],
+            lb=[-np.inf, *phi_lb, *theta_lb, OFFSET, *garch_low, *self.error_dist.bounds.lb],
+            ub=[np.inf, *phi_ub, *theta_ub, np.inf, *garch_high, *self.error_dist.bounds.ub],
         )
 
-    def _ar_stationarity(self, x: Array1D):
-        phi = x[self._vec_slices["phi"]]
-        if phi.size == 1:
-            return 1 - OFFSET - np.abs(phi[0])
-        if phi.size == 2:
-            return np.min(
-                [1 - OFFSET - np.abs(phi[0] + phi[1]), 1 - OFFSET - np.abs(phi[1])]
-            )
-        char_poly = poly.Polynomial(-np.array([-1, *phi]))
-        abs_roots = np.abs(char_poly.roots())
-        if abs_roots.size == 0:
-            return -1.0
-        return np.min(abs_roots) - 1.0 - OFFSET
+    def _arma_root(self, coeffs: np.ndarray) -> np.ndarray:
+        char_poly = poly.Polynomial(-np.array([-1, *coeffs]))
+        roots = np.abs(char_poly.roots())
+        if roots.size == 0:
+            return np.array([0.0])
+        return np.array([np.min(roots)])
 
-    def _garch_stationarity(self, x: Array1D):
-        alpha, beta = x[self._vec_slices["alpha"]], x[self._vec_slices["beta"]]
-        if alpha.size == 1 and beta.size == 1:
-            return 1 - OFFSET - np.abs(alpha[0] + beta[0])
-        char_poly = poly.Polynomial(-np.array([-1, *alpha])) - poly.Polynomial(
-            np.array([0, *beta])
-        )
-        abs_roots = np.abs(char_poly.roots())
-        if abs_roots.size == 0:
-            return -1.0
-        return np.min(abs_roots) - 1.0 - OFFSET
+    def _ar_stationarity(self):
+        phi_slc = self._vec_slices["phi"]
+        if self.arma_order[0] == 2:
+            return lambda x: 1 - OFFSET - np.abs(x[phi_slc][0] + x[phi_slc][1])
+        return lambda x: self._arma_root(x[phi_slc]) - 1 - OFFSET
 
-    def _make_constraints(self) -> list[dict[str, Callable]]:
-        constraints = [
-            {"type": "ineq", "fun": self._ar_stationarity},
-            {"type": "ineq", "fun": self._garch_stationarity},
-        ]
-        if self.error_dist.__name__ == "JohnsonSU":
-            constraints.append({"type": "ineq", "fun": jsu_constraint})
+    def _ma_invertibility(self):
+        t_slc = self._vec_slices["theta"]
+        if self.arma_order[1] == 2:
+            return lambda x: 1 - OFFSET - np.abs(x[t_slc][0] + x[t_slc][1])
+        return lambda x: self._arma_root(x[t_slc]) - 1 - OFFSET
+
+    def _garch_roots(self, alpha, beta):
+        char_poly = poly.Polynomial(-np.array([-1, *alpha])) - poly.Polynomial(np.array([0, *beta]))
+        roots = np.abs(char_poly.roots())
+        if roots.size == 0:
+            return np.array([0.0])
+        return np.array([np.min(roots)])
+
+    def _garch_stationarity(self):
+        a_slc, b_slc = self._vec_slices["alpha"], self._vec_slices["beta"]
+        if self.garch_order == (1, 1):
+            return lambda x: 1 - OFFSET - np.abs(x[a_slc] + x[b_slc])
+        return lambda x: self._garch_roots(x[a_slc], x[b_slc]) - 1 - OFFSET
+
+    def _make_constraints(self):
+        constraints = [{'type':'ineq', 'fun':self._garch_stationarity()}]
+        if self.arma_order[0] > 1:
+            constraints.append({'type':'ineq', 'fun':self._ar_stationarity()})
+        if self.arma_order[1] > 1:
+            constraints.append({'type':'ineq', 'fun':self._ma_invertibility()})
         return constraints
 
     def _get_shape_params(self, x: Array1D):

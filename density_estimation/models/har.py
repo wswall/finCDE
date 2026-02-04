@@ -6,7 +6,7 @@ from scipy.optimize import Bounds
 
 from density_estimation.common import Array1D, OFFSET
 from density_estimation.base import ModelSpec, FitData
-from density_estimation.dist import SkewedDistribution, Normal, jsu_constraint
+from density_estimation.dist import SkewedDistribution, Normal
 
 
 class HarRV(ModelSpec):
@@ -29,10 +29,7 @@ class HarRV(ModelSpec):
         return 1 - OFFSET - sum(x[1:4])
 
     def _make_constraints(self) -> list[dict[str, Callable]]:
-        constraints = [{"type": "ineq", "fun": self._stationarity}]
-        if self.error_dist.__name__ == "JohnsonSU":
-            constraints.append({"type": "ineq", "fun": jsu_constraint})
-        return constraints
+        return [{"type": "ineq", "fun": self._stationarity}]
 
     def _get_shape_params(self, x: Array1D):
         if self.error_dist.n_params == 0:
