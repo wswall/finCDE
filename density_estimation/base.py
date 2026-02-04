@@ -182,13 +182,28 @@ class ModelFit:
         fit_data: FitData,
         error_dist,
         jacobian_func: Callable,
-        hess_func: Callable,
+        hess_func: Callable
     ):
         self.result = result
         self.fit_data = fit_data
         self.error_dist = error_dist
-        self.jacobian = jacobian_func(result.x) / LLH_SCALING
-        self.hessian = hess_func(result.x) / LLH_SCALING
+        self.jacobian = jacobian_func
+        self.hessian = hess_func
+
+    def __getstate__(self):
+        # Jacobian and Hessian callables are lambdas and not picklable for multiprocessing
+        state = self.__dict__.copy()
+        if isinstance(self.jacobian, Callable):
+            del state["jacobian"]
+        if isinstance(self.hessian, Callable):
+            del state["hessian"]
+        return state
+
+    def compute_jacobian(self):
+        self.jacobian = self.jacobian(self.result.x) / LLH_SCALING
+
+    def compute_hessian(self):
+        self.hessian = self.hessian(self.result.x) / LLH_SCALING
 
     @cached_property
     def log_likelihood(self) -> float:
@@ -209,6 +224,10 @@ class ModelFit:
 
     def calc_standard_errors(self) -> np.ndarray:
         """Calculate standard errors of the fitted parameters."""
+        if isinstance(self.jacobian, Callable):
+            self.compute_jacobian()
+        if isinstance(self.hessian, Callable):
+            self.compute_hessian()
         B = np.linalg.inv(self.hessian)
         M = np.cov(self.jacobian.T)
         return np.sqrt(np.diag(B @ M @ B))
@@ -237,7 +256,7 @@ class ModelFit:
         return results[0], results[1]
 
     def log_score(self):
-        return -self.log_likelihood / len(self.fit_data.e)
+        return self.log_likelihood / len(self.fit_data.e)
 
     def _q_score(self, alpha, y, mu, sigma):
         quantile = mu + sigma * self.error_dist.ppf(alpha)
@@ -311,6 +330,7 @@ class Model:
         cls,
         data: NDArray,
         model_spec: ModelSpec,
+        compute_derivs=False,
         display: bool = True,
         ftol: float = OFFSET,
         maxiter: int = 100,
@@ -356,6 +376,9 @@ class Model:
                 base_step=model_spec.base_step,
             )
             model_fit = ModelFit(result, fit_data, error_dist, jacobian, hessian)
+            if compute_derivs:
+                model_fit.compute_jacobian()
+                model_fit.compute_hessian()
             return cls(model_spec, fit_data, result.x, model_fit)
         return result
 
@@ -414,7 +437,7 @@ class ModelFactory:
             Model | OptimizeResult: Fitted model or raw optimizer result.
         """
         spec_args, fit_args = self._extract_kw_args(
-            ["display", "ftol", "maxiter"], **kwargs
+            ["display", "ftol", "maxiter", 'compute_derivs'], **kwargs
         )
         model_spec = self._init_spec(**spec_args)
         return Model.fit(data, model_spec, **fit_args)
