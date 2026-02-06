@@ -179,14 +179,12 @@ class ModelFit:
     def __init__(
         self,
         result: OptimizeResult,
-        fit_data: FitData,
-        error_dist,
+        residuals: Array1D,
         jacobian_func: Callable,
         hess_func: Callable
     ):
         self.result = result
-        self.fit_data = fit_data
-        self.error_dist = error_dist
+        self.residuals = residuals
         self.jacobian = jacobian_func
         self.hessian = hess_func
 
@@ -212,13 +210,13 @@ class ModelFit:
 
     def aic(self) -> float:
         """Calculate the Akaike Information Criterion (AIC)."""
-        n = len(self.fit_data.e)
+        n = len(self.residuals)
         k = len(self.result.x)
         return (2 * k - 2 * self.log_likelihood) / n
 
     def bic(self) -> float:
         """Calculate the Bayesian Information Criterion (BIC)."""
-        n = len(self.fit_data.e)
+        n = len(self.residuals)
         k = len(self.result.x)
         return (np.log(n) * k - 2 * self.log_likelihood) / n
 
@@ -241,63 +239,19 @@ class ModelFit:
     def ljung_box(self, lags: int) -> np.ndarray:
         """Perform the Ljung-Box test for autocorrelation."""
         results = acorr_ljungbox(
-            self.fit_data.e, lags=lags, model_df=self.result.x.size
+            self.residuals, lags=lags, model_df=self.result.x.size
         )
         return results.values
 
     def arch_lm(self, lags: int) -> tuple[float, float]:
         """Perform the ARCH-LM test for conditional heteroskedasticity."""
-        results = het_arch(self.fit_data.e)
+        results = het_arch(self.residuals)
         return results[0], results[1]
 
     def jarque_bera(self) -> tuple[float, float]:
         """Perform the Jarque-Bera test for normality."""
-        results = jarque_bera(self.fit_data.e)
+        results = jarque_bera(self.residuals)
         return results[0], results[1]
-
-    def log_score(self):
-        return self.log_likelihood / len(self.fit_data.e)
-
-    def _q_score(self, alpha, y, mu, sigma):
-        quantile = mu + sigma * self.error_dist.ppf(alpha)
-        return ((y <= quantile) - alpha) * (quantile - y)
-
-    def crps(
-        self,
-        tol: float = 1e-10,
-        maxlevel: int = 12,
-    ) -> float:
-        """Compute the Continuous Ranked Probability Score
-
-        Given arrays of observations and corresponding residuals and
-        standard deviations, computes the Continuous Ranked Probability
-        Score (CRPS). This method uses the tanh-sinh quadrature method
-        for numerical integration of the quantile score over the
-        interval (0, 1).
-
-        Args:
-            y (np.ndarray[float]): Observed values at each time t.
-            residuals (np.ndarray[float]): Residuals at each time t.
-            sigma (np.ndarray[float]): Standard deviations at each time t.
-            tol (float, optional): Absolute tolerance for numerical
-                integration. Default is 1e-10.
-            maxlevel (int, optional): Maximum level of refinement for
-                numerical integration. Default is 12.
-
-        Returns:
-            float: Mean of CRPS values for each observation.
-        """
-        t = len(self.fit_data.y)
-        mu = self.fit_data.y + self.fit_data.e
-        result = tanhsinh(
-            self._q_score,
-            np.zeros(t),
-            np.ones(t),
-            args=(self.fit_data.y, mu, self.fit_data.sigma),
-            atol=tol,
-            maxlevel=maxlevel,
-        )
-        return np.mean(2.0 * result.integral)
 
 
 class Model:
@@ -366,7 +320,6 @@ class Model:
         )
         if result.success:
             fit_data = model_spec.make_fit_data(data, result.x)
-            error_dist = model_spec.error_dist(fit_data)
             jacobian = nd.Jacobian(
                 lambda x: model_spec.score(x, data),
                 base_step=model_spec.base_step,
@@ -375,12 +328,64 @@ class Model:
                 lambda x: model_spec.fitness(x, data) / LLH_SCALING,
                 base_step=model_spec.base_step,
             )
-            model_fit = ModelFit(result, fit_data, error_dist, jacobian, hessian)
+            model_fit = ModelFit(result, fit_data, jacobian, hessian)
             if compute_derivs:
                 model_fit.compute_jacobian()
                 model_fit.compute_hessian()
             return cls(model_spec, fit_data, result.x, model_fit)
         return result
+
+    def calc_log_score(self, data: NDArray) -> float:
+        """Calculate the mean log score for out-of-sample data"""
+        llh = self.spec.fitness(self.parameters, data)
+        return -llh / LLH_SCALING / data.shape[0]
+
+    @staticmethod
+    def _make_q_score(error_dist):
+        d = error_dist
+        def q_score(alpha, y, mu, sigma):
+            quantile = mu + sigma * d.ppf(alpha)
+            return ((y <= quantile) - alpha) * (quantile - y)
+        return q_score
+
+    def calc_crps(
+        self,
+        data: NDArray,
+        tol: float = 1e-10,
+        maxlevel: int = 12,
+    ) -> float:
+        """Compute the Continuous Ranked Probability Score
+
+        Given array of observations, computes the Continuous Ranked
+        Probability Score (CRPS) using the model's fitted parameters and
+        distributional assumption. This method uses the tanh-sinh
+        quadrature method for numerical integration of the quantile score
+        over the interval (0, 1).
+
+        Args:
+            data (np.ndarray[float]): Out of sample observations
+            tol (float, optional): Absolute tolerance for numerical
+                integration. Default is 1e-10.
+            maxlevel (int, optional): Maximum level of refinement for
+                numerical integration. Default is 12.
+
+        Returns:
+            float: Mean of CRPS values for each observation.
+        """
+        fit_data = self.spec.make_fit_data(data, self.parameters)
+        error_dist = self.spec.error_dist(fit_data)
+        q_score = self._make_q_score(error_dist)
+        t = len(fit_data.y)
+        mu = fit_data.y + fit_data.e
+        result = tanhsinh(
+            q_score,
+            np.zeros(t),
+            np.ones(t),
+            args=(fit_data.y, mu, fit_data.sigma),
+            atol=tol,
+            maxlevel=maxlevel,
+        )
+        return np.mean(2.0 * result.integral)
 
 
 class ModelFactory:
