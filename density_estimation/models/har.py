@@ -1,17 +1,16 @@
-from __future__ import annotations
 from typing import Callable
 
 import numpy as np
 from scipy.optimize import Bounds
 
 from density_estimation.common import Array1D, OFFSET
-from density_estimation.base import ModelSpec, FitData
-from density_estimation.dist import SkewedDistribution, Normal
+from density_estimation.core import ModelSpec, FitData, Distribution, SkewedDistribution
+from density_estimation.distributions import Normal
 
 
 class HarRV(ModelSpec):
 
-    def __init__(self, error_dist=Normal):
+    def __init__(self, error_dist: Distribution = Normal):
         super().__init__(error_dist)
         self.bounds = self._make_bounds()
         self.constraints = self._make_constraints()

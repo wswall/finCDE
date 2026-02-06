@@ -7,13 +7,10 @@ from numpy.polynomial import polynomial as poly
 from scipy.optimize import Bounds
 from statsmodels.regression.linear_model import yule_walker
 
-from density_estimation.base import ModelSpec, FitData
 from density_estimation.common import OFFSET, Array1D
-from density_estimation.dist import (
-    Distribution,
-    SkewedDistribution,
-    Normal
-)
+from density_estimation.core import ModelSpec, FitData, Distribution, SkewedDistribution
+from density_estimation.distributions import Normal
+
 from density_estimation.models.garch import functions as gfunc
 
 
@@ -136,7 +133,7 @@ class ArmaGarch(ModelSpec):
         elif self.arma_order[1] == 2:
             bound = np.array([np.inf, 1 - OFFSET])
         else:
-            bound = np.repeat(np.inf, self.order[0,1])
+            bound = np.repeat(np.inf, self.order[0, 1])
         return -bound, bound
 
     def _make_bounds(self) -> Bounds:
@@ -145,8 +142,22 @@ class ArmaGarch(ModelSpec):
         garch_low = np.repeat(0.0, self.order[1].sum())
         garch_high = np.repeat(np.inf, self.order[1].sum())
         return Bounds(
-            lb=[-np.inf, *phi_lb, *theta_lb, OFFSET, *garch_low, *self.error_dist.bounds.lb],
-            ub=[np.inf, *phi_ub, *theta_ub, np.inf, *garch_high, *self.error_dist.bounds.ub],
+            lb=[
+                -np.inf,
+                *phi_lb,
+                *theta_lb,
+                OFFSET,
+                *garch_low,
+                *self.error_dist.bounds.lb,
+            ],
+            ub=[
+                np.inf,
+                *phi_ub,
+                *theta_ub,
+                np.inf,
+                *garch_high,
+                *self.error_dist.bounds.ub,
+            ],
         )
 
     def _arma_root(self, coeffs: np.ndarray) -> np.ndarray:
@@ -169,7 +180,9 @@ class ArmaGarch(ModelSpec):
         return lambda x: self._arma_root(x[t_slc]) - 1 - OFFSET
 
     def _garch_roots(self, alpha, beta):
-        char_poly = poly.Polynomial(-np.array([-1, *alpha])) - poly.Polynomial(np.array([0, *beta]))
+        char_poly = poly.Polynomial(-np.array([-1, *alpha])) - poly.Polynomial(
+            np.array([0, *beta])
+        )
         roots = np.abs(char_poly.roots())
         if roots.size == 0:
             return np.array([0.0])
@@ -182,11 +195,11 @@ class ArmaGarch(ModelSpec):
         return lambda x: self._garch_roots(x[a_slc], x[b_slc]) - 1 - OFFSET
 
     def _make_constraints(self):
-        constraints = [{'type':'ineq', 'fun':self._garch_stationarity()}]
+        constraints = [{"type": "ineq", "fun": self._garch_stationarity()}]
         if self.arma_order[0] > 1:
-            constraints.append({'type':'ineq', 'fun':self._ar_stationarity()})
+            constraints.append({"type": "ineq", "fun": self._ar_stationarity()})
         if self.arma_order[1] > 1:
-            constraints.append({'type':'ineq', 'fun':self._ma_invertibility()})
+            constraints.append({"type": "ineq", "fun": self._ma_invertibility()})
         return constraints
 
     def _get_shape_params(self, x: Array1D):
