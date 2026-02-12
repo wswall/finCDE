@@ -1,21 +1,11 @@
 import json
 from pathlib import Path
-import platform
 import pickle
 
 from density_estimation import ModelFactory
 from density_estimation.models import ArmaGarch, HarRV
 from density_estimation.common import get_data
 from density_estimation.distributions import *
-
-
-# Get count of CPUs available to this process
-if platform.system() == "Windows":
-    from psutil import Process
-    PROC_COUNT = len(Process().cpu_affinity())
-else:
-    from os import sched_getaffinity
-    PROC_COUNT = len(sched_getaffinity(0))
 
 
 DATA_DIR = Path("data/TAQ")
@@ -92,14 +82,14 @@ if __name__ == "__main__":
         T = round(history.shape[0] * .8)
 
         garch_configs = make_garch_configs(history[:T, 0], garch_specs[company])
-        garch_models = garch_factory.build_many(garch_configs,proc_count=PROC_COUNT)
+        garch_models = garch_factory.build_many(garch_configs)
         trial = OUTPUT_DIR / 'arma_garch'
         trial.mkdir(parents=True, exist_ok=True)
         with open(trial / f'{company}_models.pkl', 'wb') as pfile:
             pickle.dump(garch_models, pfile)
 
         har_configs = make_har_configs(history[:T])
-        har_models = har_factory.build_many(har_configs,proc_count=PROC_COUNT)
+        har_models = har_factory.build_many(har_configs)
         trial = OUTPUT_DIR / 'har'
         trial.mkdir(parents=True, exist_ok=True)
         with open(trial / f'{company}_models.pkl', 'wb') as pfile:
