@@ -91,17 +91,16 @@ class Model:
                 lambda x: model_spec.fitness(x, data) / LLH_SCALING,
                 base_step=model_spec.base_step,
             )
-            model_fit = ModelFit(result, fit_data, jacobian, hessian)
+            model_fit = ModelFit(result, fit_data.e, jacobian, hessian)
             if compute_derivs:
                 model_fit.compute_jacobian()
                 model_fit.compute_hessian()
             return cls(model_spec, fit_data, result.x, model_fit)
         return result
 
-    def calc_log_score(self, data: NDArray) -> float:
-        """Calculate the mean log score for out-of-sample data"""
-        llh = self.spec.fitness(self.parameters, data)
-        return -llh / LLH_SCALING / data.shape[0]
+    def calc_log_score(self, data: NDArray) -> NDArray:
+        """Calculate the log scores for out-of-sample data"""
+        return self.spec.score(self.parameters, data)
 
     @staticmethod
     def _make_q_score(error_dist):
@@ -135,19 +134,23 @@ class Model:
                 numerical integration. Default is 12.
 
         Returns:
-            float: Mean of CRPS values for each observation.
+            float: CRPS values for each observation.
         """
         fit_data = self.spec.make_fit_data(data, self.parameters)
         error_dist = self.spec.error_dist(fit_data)
         q_score = self._make_q_score(error_dist)
         t = len(fit_data.y)
-        mu = fit_data.y + fit_data.e
-        result = tanhsinh(
-            q_score,
-            np.zeros(t),
-            np.ones(t),
-            args=(fit_data.y, mu, fit_data.sigma),
-            atol=tol,
-            maxlevel=maxlevel,
-        )
-        return np.mean(2.0 * result.integral)
+        mu = fit_data.y - fit_data.e
+        results = np.zeros(t)
+        for i in range(t):
+            result = tanhsinh(
+                q_score,
+                0.0,
+                1.0,
+                args=(fit_data.y[i], mu[i], fit_data.sigma[i]),
+                atol=tol,
+                maxlevel=maxlevel
+            )
+            results[i] = 2.0 * result.integral
+        return results
+
