@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Callable
+from typing import Literal
 
 import numpy as np
 from numpy.polynomial import polynomial as poly
@@ -10,7 +10,6 @@ from statsmodels.regression.linear_model import yule_walker
 from density_estimation.common import OFFSET, Array1D
 from density_estimation.core import ModelSpec, FitData, Distribution, SkewedDistribution
 from density_estimation.distributions import Normal
-
 from density_estimation.models.garch import functions as gfunc
 
 
@@ -27,7 +26,7 @@ class ArmaGarch(ModelSpec):
         self.garch_order = garch_order
         if np.any(self.order < 0):
             raise ValueError("All ARMA and GARCH order terms must be nonnegative")
-        # Slices to recover params from vector during optimization
+        # Dict of slices to recover params from vectors
         self._vec_slices = self._make_slice_dict()
         self._arma_eq = self._get_arma_eq()
         self._garch_eq = self._get_garch_eq()
@@ -35,7 +34,7 @@ class ArmaGarch(ModelSpec):
         self.constraints = self._make_constraints()
 
     def __call__(self, data: Array1D, x: Array1D):
-        params = self.param_vec_to_dict(x)
+        params = self.make_param_dict(x)
         residuals = self._arma_eq(
             data, data.mean(), params["mu"][0], params["phi"], params["theta"]
         )
@@ -49,7 +48,7 @@ class ArmaGarch(ModelSpec):
         return np.column_stack((residuals, variance))
 
     def __getstate__(self):
-        # Constraint callables are lambdas and not picklable for multiprocessing
+        # Constraint callables are lambdas, can't be serialized for multiprocessing
         state = self.__dict__.copy()
         if "constraints" in state:
             del state["constraints"]
@@ -115,7 +114,7 @@ class ArmaGarch(ModelSpec):
             "beta": slice(1 + n_arma_terms + order[1, 0], n_model_terms),
         }
 
-    def param_vec_to_dict(self, x: Array1D) -> dict[str, np.ndarray]:
+    def make_param_dict(self, x: Array1D) -> dict[str, np.ndarray]:
         return {param: x[slc] for param, slc in self._vec_slices.items()}
 
     def _phi_bound(self):
@@ -180,9 +179,9 @@ class ArmaGarch(ModelSpec):
         return lambda x: self._arma_root(x[t_slc]) - 1 - OFFSET
 
     def _garch_roots(self, alpha, beta):
-        char_poly = poly.Polynomial(-np.array([-1, *alpha])) - poly.Polynomial(
-            np.array([0, *beta])
-        )
+        alpha_poly = poly.Polynomial(-np.array([-1, *alpha]))
+        beta_poly = poly.Polynomial(np.array([0, *beta]))
+        char_poly =  alpha_poly - beta_poly
         roots = np.abs(char_poly.roots())
         if roots.size == 0:
             return np.array([0.0])

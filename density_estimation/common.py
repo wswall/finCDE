@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 
-OFFSET = 1e-6
+OFFSET = 1e-8
 LLH_SCALING = 1e-5
 
 
@@ -73,7 +73,9 @@ def get_data(taq_data_path: str, M: int = 79) -> np.ndarray[float]:
         M (int, optional): Number of intervals per day. Default is 79.
 
     Returns:
-        np.ndarray: Preprocessed data array.
+        np.ndarray: Matrix of shape (T, 4) consisting of log returns,
+            daily realized variance, weekly realized variance, and
+            monthly realized variance.
     """
     df = pd.read_csv(
         taq_data_path, engine="pyarrow", header=None, skiprows=1, usecols=(0, 2)

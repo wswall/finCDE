@@ -8,8 +8,8 @@ from scipy.optimize import Bounds
 from scipy.stats import laplace, norm, t
 
 from density_estimation.common import sumjit, OFFSET
-from density_estimation.base import FitData
 from density_estimation.core import (
+    FitData,
     Distribution,
     SymmetricDistribution,
     SkewedDistribution,
@@ -192,7 +192,7 @@ class JohnsonSU(Distribution):
 
     def pdf(self) -> ArrayLike:
         z = (self.params.z - self.loc) / self.scale
-        big_z = self.params.xi + self.params.nu * np.log(z + np.sqrt(z**2.0 + 1.0))
+        big_z = self.params.xi + self.params.nu * np.asinh(z)
         num = np.exp(-0.5 * big_z**2.0) * self.params.nu
         denom = self.scale * np.sqrt(2.0 * np.pi * (1.0 + z**2.0))
         return num / denom
