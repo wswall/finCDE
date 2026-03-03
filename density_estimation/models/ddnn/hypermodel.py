@@ -1,20 +1,61 @@
 from keras_tuner.engine.hyperparameters import HyperParameters, HyperParameter
 import tensorflow as tf
 import tensorflow_probability as tfp
+from tensorflow_probability import distributions as tfd
 import tf_keras as keras
 from tf_keras.regularizers import L1, Regularizer
-
-from density_estimation.models.pnn.dist_functions import *
 
 
 ACTIVATIONS = ["sigmoid", "relu", "elu", "tanh", "softplus", "softmax"]
 DISTRIBUTIONS = {
-    "normal": {"params": ["loc", "scale"], "fun": make_normal_tfd},
-    "laplace": {"params": ["loc", "scale"], "fun": make_laplace_tfd},
-    "t": {"params": ["loc", "scale", "df"], "fun": make_t_tfd},
-    "skewnorm": {"params": ["loc", "scale", "skewness"], "fun": make_skewnorm_tfd},
-    "skewt": {"params": ["loc", "scale", "skewness", "df"], "fun": make_skewt_tfd},
-    "jsu": {"params": ["loc", "scale", "skewness", "tailweight"], "fun": make_jsu_tfd}
+    "normal": {
+        "params": ["loc", "scale"],
+        "lambda": lambda t: tfd.Normal(
+            loc=t[..., 0], scale=1e-3 + 3 * tf.math.softplus(t[..., 1])
+        ),
+    },
+    "laplace": {
+        "params": ["loc", "scale"],
+        "lambda": lambda t: tfd.Laplace(
+            loc=t[..., 0], scale=1e-3 + 3 * tf.math.softplus(t[..., 1])
+        ),
+    },
+    "t": {
+        "params": ["loc", "scale", "df"],
+        "lambda": lambda t: tfd.StudentT(
+            loc=t[..., 0],
+            scale=1e-3 + 3 * tf.math.softplus(t[..., 1]),
+            df=1 + 3 * tf.math.softplus(t[..., 2]),
+        ),
+    },
+    "skewnorm": {
+        "params": ["loc", "scale", "skewness"],
+        # tfd two piece normal is Fernández-Steel Skew Normal
+        "lambda": lambda t: tfd.TwoPieceNormal(
+            loc=t[..., 0],
+            scale=1e-3 + 3 * tf.math.softplus(t[..., 1]),
+            skewness=1e-3 + 3 * tf.math.softplus(t[..., 2]),
+        ),
+    },
+    "skewt": {
+        "params": ["loc", "scale", "skewness", "df"],
+        # tfd two piece student t is Fernández-Steel Skew Student T
+        "lambda": lambda t: tfd.TwoPieceStudentT(
+            loc=t[..., 0],
+            scale=1e-3 + 3 * tf.math.softplus(t[..., 1]),
+            skewness=1e-3 + 3 * tf.math.softplus(t[..., 2]),
+            df=1 + 3 * tf.math.softplus(t[..., 3]),
+        ),
+    },
+    "jsu": {
+        "params": ["loc", "scale", "skewness", "tailweight"],
+        "lambda": lambda t: tfd.JohnsonSU(
+            loc=t[..., 0],
+            scale=1e-3 + 3 * tf.math.softplus(t[..., 1]),
+            skewness=t[..., 2],
+            tailweight=1 + 3 * tf.math.softplus(t[..., 3]),
+        ),
+    },
 }
 
 
@@ -56,8 +97,8 @@ def _make_dense(
     )
 
 
-def build_prob_nn(hp: HyperParameters, dist_name: str = "normal", input_dim: int = 3):
-    """Builds a probabilistic neural network model using Keras and TensorFlow Probability.
+def build_ddnn(hp: HyperParameters, dist_name: str = "normal", input_dim: int = 3):
+    """Builds a DDNN model using Keras and TensorFlow Probability.
 
     Args:
         hp: An instance of HyperParameters for managing hyperparameter tuning.
