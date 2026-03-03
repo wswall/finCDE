@@ -104,10 +104,10 @@ class Model:
 
     @staticmethod
     def _make_q_score(error_dist):
-        d = error_dist
+        dist = error_dist
 
         def q_score(alpha, y, mu, sigma):
-            quantile = mu + sigma * d.ppf(alpha)
+            quantile = mu + sigma * dist.ppf(alpha)
             return ((y <= quantile) - alpha) * (quantile - y)
 
         return q_score
@@ -117,7 +117,7 @@ class Model:
         data: NDArray,
         tol: float = 1e-10,
         maxlevel: int = 12,
-    ) -> float:
+    ) -> NDArray:
         """Compute the Continuous Ranked Probability Score
 
         Given array of observations, computes the Continuous Ranked
@@ -134,7 +134,7 @@ class Model:
                 numerical integration. Default is 12.
 
         Returns:
-            float: CRPS values for each observation.
+            np.ndarray[float]: CRPS values for each observation.
         """
         fit_data = self.spec.make_fit_data(data, self.parameters)
         error_dist = self.spec.error_dist(fit_data)
@@ -149,8 +149,7 @@ class Model:
                 1.0,
                 args=(fit_data.y[i], mu[i], fit_data.sigma[i]),
                 atol=tol,
-                maxlevel=maxlevel
+                maxlevel=maxlevel,
             )
             results[i] = 2.0 * result.integral
         return results
-

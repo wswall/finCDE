@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Callable
 
 import numpy as np
 from numpy.polynomial import polynomial as poly
@@ -14,6 +14,17 @@ from density_estimation.models.garch import functions as gfunc
 
 
 class ArmaGarch(ModelSpec):
+    """ARMA-GARCH model specification.
+
+    Models the conditional mean using an ARMA(p,q) process and the conditional
+    variance using a GARCH(p,q) process.
+
+    Attributes:
+        arma_order (tuple[int, int]): Order (p, q) of the ARMA process.
+        garch_order (tuple[int, int]): Order (p, q) of the GARCH process.
+        bounds (scipy.optimize.Bounds): Parameter bounds for optimization.
+        constraints (list[dict]): Optimization constraints.
+    """
 
     def __init__(
         self,
@@ -21,6 +32,16 @@ class ArmaGarch(ModelSpec):
         garch_order: tuple[int, int] = (1, 1),
         error_dist: Distribution = Normal,
     ):
+        """Initializes the ARMA-GARCH model specification.
+
+        Args:
+            arma_order (tuple[int, int], optional): Order of AR and MA components.
+                Defaults to (1, 1).
+            garch_order (tuple[int, int], optional): Order of GARCH components.
+                Defaults to (1, 1).
+            error_dist (Distribution, optional): The error distribution class.
+                Defaults to Normal.
+        """
         super().__init__(error_dist)
         self.arma_order = arma_order
         self.garch_order = garch_order
@@ -33,7 +54,16 @@ class ArmaGarch(ModelSpec):
         self.bounds = self._make_bounds()
         self.constraints = self._make_constraints()
 
-    def __call__(self, data: Array1D, x: Array1D):
+    def __call__(self, data: Array1D, x: Array1D) -> np.ndarray:
+        """Calculates residuals and conditional variance.
+
+        Args:
+            data (Array1D): Input time series data.
+            x (Array1D): Model parameters.
+
+        Returns:
+            np.ndarray: Array with columns [residuals, variance].
+        """
         params = self.make_param_dict(x)
         residuals = self._arma_eq(
             data, data.mean(), params["mu"][0], params["phi"], params["theta"]
@@ -54,7 +84,8 @@ class ArmaGarch(ModelSpec):
             del state["constraints"]
         return state
 
-    def _get_arma_eq(self):
+    def _get_arma_eq(self) -> Callable:
+        # Select ARMA calculation function based on the specified order
         if self.arma_order == (1, 0):
             return gfunc.calc_ar_1
         if self.arma_order[0] > 1 and self.arma_order[1] == 0:
@@ -63,12 +94,24 @@ class ArmaGarch(ModelSpec):
             return gfunc.calc_arma_11
         return gfunc.calc_arma_mn
 
-    def _get_garch_eq(self):
+    def _get_garch_eq(self) -> Callable:
+        # Select GARCH calculation function based on the specified order
         if self.garch_order == (1, 1):
             return gfunc.calc_garch_11
         return gfunc.calc_garch_pq
 
-    def make_initial_guess(self, data):
+    def make_initial_guess(self, data) -> np.ndarray:
+        """Generates an initial guess for model parameters.
+
+        Uses Yule-Walker equations to initialize the AR parameters and
+        heuristics for others.
+
+        Args:
+            data (np.ndarray): The data used for estimation.
+
+        Returns:
+            np.ndarray: Initial parameter guess array.
+        """
         ar_initial = yule_walker(data, order=self.arma_order[0])[0]
         return np.array(
             [
@@ -83,7 +126,8 @@ class ArmaGarch(ModelSpec):
         )
 
     @property
-    def base_step(self):
+    def base_step(self) -> np.ndarray:
+        """Base step size for numerical differentiation."""
         return np.array(
             [
                 0.2,
@@ -101,7 +145,7 @@ class ArmaGarch(ModelSpec):
         """Return the order of the ARMA and GARCH parts."""
         return np.array([self.arma_order, self.garch_order])
 
-    def _make_slice_dict(self):
+    def _make_slice_dict(self) -> dict[str, slice]:
         order = self.order
         n_arma_terms = 1 + order[0].sum()
         n_model_terms = 2 + order.sum()
@@ -115,9 +159,18 @@ class ArmaGarch(ModelSpec):
         }
 
     def make_param_dict(self, x: Array1D) -> dict[str, np.ndarray]:
+        """Converts parameter array to a dictionary of parameters.
+
+        Args:
+            x (Array1D): Flat array of model parameters.
+
+        Returns:
+            dict[str, np.ndarray]: Dictionary with keys 'mu', 'phi', 'theta',
+                'omega', 'alpha', 'beta'.
+        """
         return {param: x[slc] for param, slc in self._vec_slices.items()}
 
-    def _phi_bound(self):
+    def _phi_bound(self) -> tuple[np.ndarray, np.ndarray]:
         if self.arma_order[0] == 1:
             bound = np.array([1 - OFFSET])
         elif self.arma_order[0] == 2:
@@ -126,7 +179,7 @@ class ArmaGarch(ModelSpec):
             bound = np.repeat(np.inf, self.order[0, 0])
         return -bound, bound
 
-    def _theta_bound(self):
+    def _theta_bound(self) -> tuple[np.ndarray, np.ndarray]:
         if self.arma_order[1] == 1:
             bound = np.array([1 - OFFSET])
         elif self.arma_order[1] == 2:
@@ -166,34 +219,34 @@ class ArmaGarch(ModelSpec):
             return np.array([0.0])
         return np.array([np.min(roots)])
 
-    def _ar_stationarity(self):
+    def _ar_stationarity(self) -> Callable:
         phi_slc = self._vec_slices["phi"]
         if self.arma_order[0] == 2:
             return lambda x: 1 - OFFSET - np.abs(x[phi_slc][0] + x[phi_slc][1])
         return lambda x: self._arma_root(x[phi_slc]) - 1 - OFFSET
 
-    def _ma_invertibility(self):
+    def _ma_invertibility(self) -> Callable:
         t_slc = self._vec_slices["theta"]
         if self.arma_order[1] == 2:
             return lambda x: 1 - OFFSET - np.abs(x[t_slc][0] + x[t_slc][1])
         return lambda x: self._arma_root(x[t_slc]) - 1 - OFFSET
 
-    def _garch_roots(self, alpha, beta):
+    def _garch_roots(self, alpha: np.ndarray, beta: np.ndarray) -> np.ndarray:
         alpha_poly = poly.Polynomial(-np.array([-1, *alpha]))
         beta_poly = poly.Polynomial(np.array([0, *beta]))
-        char_poly =  alpha_poly - beta_poly
+        char_poly = alpha_poly - beta_poly
         roots = np.abs(char_poly.roots())
         if roots.size == 0:
             return np.array([0.0])
         return np.array([np.min(roots)])
 
-    def _garch_stationarity(self):
+    def _garch_stationarity(self) -> Callable:
         a_slc, b_slc = self._vec_slices["alpha"], self._vec_slices["beta"]
         if self.garch_order == (1, 1):
             return lambda x: 1 - OFFSET - np.abs(x[a_slc] + x[b_slc])
         return lambda x: self._garch_roots(x[a_slc], x[b_slc]) - 1 - OFFSET
 
-    def _make_constraints(self):
+    def _make_constraints(self) -> list[dict[str, Callable]]:
         constraints = [{"type": "ineq", "fun": self._garch_stationarity()}]
         if self.arma_order[0] > 1:
             constraints.append({"type": "ineq", "fun": self._ar_stationarity()})
@@ -210,7 +263,16 @@ class ArmaGarch(ModelSpec):
             return {"xi": None, "nu": x[-1]}
         return {"xi": x[-2], "nu": x[-1]}
 
-    def make_fit_data(self, data, x):
+    def make_fit_data(self, data: np.ndarray, x: Array1D) -> FitData:
+        """Constructs a FitData object for model evaluation.
+
+        Args:
+            data (np.ndarray): Input data array.
+            x (Array1D): Model parameters.
+
+        Returns:
+            FitData: Data object ready for likelihood computation.
+        """
         pred_vals = self(data, x)
         sigma = np.sqrt(np.maximum(1e-8, pred_vals[:, 1]))
         shape_params = self._get_shape_params(x)

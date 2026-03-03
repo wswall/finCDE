@@ -5,7 +5,7 @@ from multiprocessing import Pool
 import numpy as np
 from scipy.optimize import OptimizeResult
 
-from density_estimation.core import Model
+from density_estimation.core import Model, ModelSpec
 
 
 class ModelFactory:
@@ -19,7 +19,7 @@ class ModelFactory:
         defaults (dict): Default keyword arguments for spec construction.
     """
 
-    def __init__(self, model_class, **kwargs):
+    def __init__(self, model_class: type, **kwargs):
         """Initialize the factory.
 
         Args:
@@ -29,12 +29,12 @@ class ModelFactory:
         self.model_class = model_class
         self.defaults = kwargs or {}
 
-    def _init_spec(self, **kwargs):
+    def _init_spec(self, **kwargs) -> ModelSpec:
         kwargs.update(self.defaults)
         return self.model_class(**kwargs)
 
     @staticmethod
-    def _extract_kw_args(kw_list, **kwargs):
+    def _extract_kw_args(kw_list: Sequence[str], **kwargs) -> tuple[dict, dict]:
         """Split kwargs into spec args and fit args.
 
         Args:
@@ -50,7 +50,7 @@ class ModelFactory:
                 extracted[key] = kwargs.pop(key)
         return kwargs, extracted
 
-    def build(self, data, **kwargs):
+    def build(self, data: np.ndarray, **kwargs) -> Model | OptimizeResult:
         """Build and fit a model from data and configuration kwargs.
 
         Args:
@@ -67,11 +67,13 @@ class ModelFactory:
         model_spec = self._init_spec(**spec_args)
         return Model.fit(data, model_spec, **fit_args)
 
-    def _worker(self, config):
+    def _worker(self, config: dict) -> Model | OptimizeResult:
         data = config.pop("data")
         return self.build(data, **config)
 
-    def build_many(self, config_list, proc_count=1):
+    def build_many(
+        self, config_list: Sequence[dict], proc_count: int = 1
+    ) -> list[Model | OptimizeResult]:
         """Build and fit multiple models from a list of configs.
 
         Args:
@@ -84,7 +86,6 @@ class ModelFactory:
             list[Model | OptimizeResult]: List of fitted models or optimizer
                 results corresponding to the input configs.
         """
-        # Method to build multiple models in parallel
         if proc_count > 1:
             with Pool(proc_count) as p:
                 results = p.map(self._worker, config_list)

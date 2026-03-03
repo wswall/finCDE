@@ -11,6 +11,17 @@ from density_estimation.common import LLH_SCALING, Array1D
 
 
 class ModelFit:
+    """Class to hold and analyze the results of a model fit.
+
+    Stores optimization results, residuals, and provides methods for
+    post-estimation diagnostics and statistics.
+
+    Attributes:
+        result (OptimizeResult): The result object from scipy.optimize.
+        residuals (Array1D): Array of model residuals.
+        jacobian (Callable | np.ndarray): Function to compute Jacobian or the computed Jacobian.
+        hessian (Callable | np.ndarray): Function to compute Hessian or the computed Hessian.
+    """
 
     def __init__(
         self,
@@ -19,13 +30,21 @@ class ModelFit:
         jacobian_func: Callable,
         hess_func: Callable,
     ):
+        """Initialize the ModelFit object.
+
+        Args:
+            result (OptimizeResult): Optimization result.
+            residuals (Array1D): Model residuals.
+            jacobian_func (Callable): Function that calculates the Jacobian matrix.
+            hess_func (Callable): Function that calculates the Hessian matrix.
+        """
         self.result = result
         self.residuals = residuals
         self.jacobian = jacobian_func
         self.hessian = hess_func
 
     def __getstate__(self):
-        # Jacobian and Hessian callables are lambdas and not picklable for multiprocessing
+        # Jacobian & Hessian callables are lambdas, can't be serialized for multiproc
         state = self.__dict__.copy()
         if isinstance(self.jacobian, Callable):
             del state["jacobian"]
@@ -33,10 +52,20 @@ class ModelFit:
             del state["hessian"]
         return state
 
-    def compute_jacobian(self):
+    def compute_jacobian(self) -> None:
+        """Compute the Jacobian derived from the score function.
+
+        Evaluates the Jacobian with the fitted parameters and updates
+        self.jacobian with the calculated array.
+        """
         self.jacobian = self.jacobian(self.result.x) / LLH_SCALING
 
-    def compute_hessian(self):
+    def compute_hessian(self) -> None:
+        """Compute the Hessian derived from the likelihood function.
+
+        Evaluates the Hessian with the fitted parameters and updates
+        self.hessian with the calculated array.
+        """
         self.hessian = self.hessian(self.result.x) / LLH_SCALING
 
     @cached_property
@@ -83,6 +112,6 @@ class ModelFit:
         return results[0], results[1]
 
     def jarque_bera(self) -> tuple[float, float]:
-        """Perform the Jarque-Bera test for normality."""
+        """Perform the Jarque-Bera test for normality on residuals."""
         results = jarque_bera(self.residuals)
         return results[0], results[1]

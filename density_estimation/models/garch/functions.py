@@ -3,14 +3,42 @@ import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
 
-def calc_ar_1(returns, y_init, mu, phi, *args):
+def calc_ar_1(
+    returns: np.ndarray, y_init: float, mu: float, phi: float, *args
+) -> np.ndarray:
+    """Calculates residuals for an AR(1) process.
+
+    Args:
+        returns (np.ndarray): Return series.
+        y_init (float): Initial value for the AR process.
+        mu (float): Mean parameter.
+        phi (float): AR parameters. Only first element is used.
+        *args: Variable length argument list.
+
+    Returns:
+        np.ndarray: Residuals given the parameters.
+    """
     output = np.zeros(returns.shape[0], dtype=np.float64)
     output[0] = returns[0] - mu - phi * y_init
     output[1:] = returns[1:] - mu - phi * returns[:-1]
     return output
 
 
-def calc_ar_m(returns, y_init, mu, phi, *args):
+def calc_ar_m(
+    returns: np.ndarray, y_init: float, mu: float, phi: np.ndarray, *args
+) -> np.ndarray:
+    """Calculates residuals for an AR(m) process.
+
+    Args:
+        returns (np.ndarray): Return series.
+        y_init (float): Initial value for the AR process.
+        mu (float): Mean parameter.
+        phi (np.ndarray): AR parameters array.
+        *args: Variable length argument list.
+
+    Returns:
+        np.ndarray: Residuals given the parameters.
+    """
     output = np.zeros(returns.shape[0], dtype=np.float64)
     m = phi.size
     output[:m] = returns[:m] - mu - phi.sum() * y_init
@@ -21,6 +49,18 @@ def calc_ar_m(returns, y_init, mu, phi, *args):
 
 @njit(f8[:](f8[:], f8, f8, f8[:], f8[:]), fastmath=True)
 def calc_arma_11(returns, y_init, mu, phi, theta):
+    """Calculates residuals for an ARMA(1,1) process using Numba.
+
+    Args:
+        returns (np.ndarray): Return series.
+        y_init (float): Initial value.
+        mu (float): Mean parameter.
+        phi (np.ndarray): AR parameters.
+        theta (np.ndarray): MA parameters.
+
+    Returns:
+        np.ndarray: Residuals.
+    """
     phi, theta = phi[0], theta[0]
     output = np.zeros(returns.shape[0], dtype=np.float64)
     output[0] = returns[0] - mu - phi * y_init
@@ -31,6 +71,18 @@ def calc_arma_11(returns, y_init, mu, phi, theta):
 
 @njit(f8[:](f8[:], f8, f8, f8[:], f8[:]), fastmath=True)
 def calc_arma_mn(returns, y_init, mu, phi, theta):
+    """Calculates residuals for an ARMA(m,n) process using Numba.
+
+    Args:
+        returns (np.ndarray): Return series.
+        y_init (float): Initial value.
+        mu (float): Mean parameter.
+        phi (np.ndarray): AR parameters.
+        theta (np.ndarray): MA parameters.
+
+    Returns:
+        np.ndarray: Residuals.
+    """
     max_lag = max(phi.size, theta.size)
     output = np.zeros(returns.shape[0], dtype=np.float64)
     output[:max_lag] = returns[:max_lag] - mu - phi.sum() * y_init
@@ -46,6 +98,18 @@ def calc_arma_mn(returns, y_init, mu, phi, theta):
 
 @njit(f8[:](f8[:], f8, f8, f8[:], f8[:]), fastmath=True)
 def calc_garch_11(residuals, var_init, omega, alpha, beta):
+    """Calculates conditional variance for a GARCH(1,1) process using Numba.
+
+    Args:
+        residuals (np.ndarray): Residual series.
+        var_init (float): Initial variance.
+        omega (float): Constant variance term.
+        alpha (np.ndarray): ARCH parameters.
+        beta (np.ndarray): GARCH parameters.
+
+    Returns:
+        np.ndarray: Conditional variance series.
+    """
     alpha, beta = alpha[0], beta[0]
     output = np.zeros(residuals.shape[0], dtype=np.float64)
     output[0] = var_init
@@ -56,6 +120,18 @@ def calc_garch_11(residuals, var_init, omega, alpha, beta):
 
 @njit(f8[:](f8[:], f8, f8, f8[:], f8[:]), fastmath=True)
 def calc_garch_pq(residuals, var_init, omega, alpha, beta):
+    """Calculates conditional variance for a GARCH(p,q) process using Numba.
+
+    Args:
+        residuals (np.ndarray): Residual series.
+        var_init (float): Initial variance.
+        omega (float): Constant variance term.
+        alpha (np.ndarray): ARCH parameters.
+        beta (np.ndarray): GARCH parameters.
+
+    Returns:
+        np.ndarray: Conditional variance series.
+    """
     max_lag = max(alpha.size, beta.size)
     output = np.zeros(residuals.shape[0], dtype=np.float64)
     output[:max_lag] = var_init
