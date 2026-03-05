@@ -125,7 +125,7 @@ model specification constructor. Optional keys `display`, `ftol`, `maxiter`, and
 
 ### Data Utilities
 
-`density_estimation.common.get_data(taq_data_path, M=79)` loads a TAQ CSV file and 
+The function`get_data(taq_data_path, M=79)` in `density_estimation.common` loads a TAQ CSV file and 
 computes log returns, daily realized volatility, weekly realized volatility, and 
 monthly realized volatility.
 ---
