@@ -134,7 +134,7 @@ monthly realized volatility.
 
 ### GARCH Model Selection
 
-Performs asearch over ARMA-GARCH specifications for a single company. Uses 
+Performs a grid search over ARMA-GARCH specifications for a single company. Uses 
 `ModelFactory.build_many()` with multiprocessing for parallel fitting. Results
 (log-likelihood, AIC, BIC) are saved to CSV in `trials/arma_garch/model_selection/`.
 
