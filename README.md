@@ -1,126 +1,180 @@
 ## Setup
 
-Install requirements
-
-```
+```bash
 pip install -r requirements.txt
 ```
 
-To use keras_tuner with tensorflow_probability and tf_keras, copy `assets/config.py` 
-to `keras_tuner/src/backend` in your environment's `python3.*/dist-packages`
+To use `keras_tuner` with `tensorflow_probability` and `tf_keras`, copy
+`assets/config.py` to `keras_tuner/src/backend` in your environment's
+`python3.*/dist-packages` directory.
 
-## Models
+---
 
-Parametric models are available for estimating conditional mean and variance of log 
-returns. Additionally, a "distributional neural network" is available for estimating 
-location, scale, and shape parameters of a conditional distribution.
+## Project Structure
 
-### Parametric Models
-A `ModelSpec` contains a model specification and the methods needed for fitting its 
-parameters. The `ModelSpec` is subclassed for each parametric model class. The subclassed
-model specifications are located in `models`. Currently, only ARMA(m,n)-GARCH(p,q) and 
-HAR-RV models are implemented in.
+```
+density_estimation/          # Core package
+├── __init__.py              # Public API re-exports
+├── common.py                # Shared utilities, Numba helpers, data loading
+├── distributions.py         # Concrete distribution classes
+├── factory.py               # ModelFactory for batch model construction
+├── core/
+│   ├── dist.py              # Base distribution classes and FitData container
+│   ├── model.py             # Model fitting via MLE (SLSQP)
+│   ├── model_fit.py         # Post-estimation diagnostics (AIC, BIC, tests)
+│   └── spec.py              # Abstract ModelSpec base class
+└── models/
+    ├── har.py               # HAR-RV model specification
+    ├── garch/
+    │   ├── arma_garch.py    # ARMA(m,n)-GARCH(p,q) model specification
+    │   ├── functions.py     # Numba-accelerated ARMA/GARCH recursions
+    └── ddnn/
+        └── hypermodel.py    # Distributional deep neural network builder
 
-The model parameters are fit by calling `Model.fit()` with the data to fit the model to
-and a `ModelSpec`. The `Model` instance initialized with `.fit()` contains the data, the 
-`ModelSpec`, the fitted parameters, and a class `ModelFit` which contains methods for 
-evaluating the fitted model. 
+build_parametric.py          # Script: build best parametric models per company
+eval_garch_models.py         # Script: grid search over ARMA-GARCH specifications
+DDNN.ipynb                   # Notebook: DDNN hyperparameter tuning & evaluation
+```
 
-The `ModelFactory` class provides a convenient way to fit multiple models of a single 
-class. A `ModelFactory` is initialized with a model class and arguments to be used
-as defaults for the model class. Fitted models can then be constructed by calling 
-`ModelFactory.build()` with the data and any other arguments to be used for the 
-specification. Multiple models can be constructed in parallel by passing a list of
-dictionaries containing data and specification arguments to `ModelFactory.build_many()`,
-with the keyword argument `cpu_count` set to the desired number of parallel processes. 
+---
 
-### Probabilistic Neural Network
+## Quick Start
 
-`models.nn` adapts code from [Marcjasz et al. (2022)](
-https://doi.org/10.48550/arXiv.2207.02832) to implement a neural network for density estimation. Input data is optionally passed to batch normalization and dropout layers then two fully connected hidden layers. Outputs from the second hidden layer are passed to a separate hidden layer for each parameter in the specified distribution. Outputs from the distribution parameter hidden layers are concatenated and passed to the distribution layer which outputs a TensorFlow distribution. See the [TensorFlow documentation](https://www.tensorflow.org/probability/api_docs/python/tfp/distributions) for details on usage of distribution classes.
+```python
+import numpy as np
+from density_estimation import Model, ArmaGarch, StudentT
+from density_estimation.common import get_data
 
-![](assets/ddnn.png)
+# Load TAQ data → (T, 4) array of [log_returns, rv_d, rv_w, rv_m]
+data = get_data("...")
+split = round(len(data) * 0.8)
+train, test = data[:split], data[split:]
 
-The model is constructed by passing a Keras Hyperparameters object and a distribution type to the function `build_model()`. Hyperparameter values can be selected using keras_tuner. See example in `nn.ipynb`
+# --- Fit a single ARMA(1,1)-GARCH(1,1) with Student-t errors ---
+spec = ArmaGarch(arma_order=(1, 1), garch_order=(1, 1), error_dist=StudentT)
+model = Model.fit(train[:, 0], spec)
 
-## Distributions
+print("Log-likelihood:", model.evaluate.log_likelihood)
+print("AIC:", model.evaluate.aic())
+print("BIC:", model.evaluate.bic())
 
-Distributions for parametric models are implemented as classes in `dist.py`. The inputs 
-to these distributions are assumed to be standardized residuals, so the above described
-parametric models must apply the transformation:  
+# Log score (negative log-density per observation)
+log_score = model.calc_log_score(test[:, 0])
+print("Log Score:", log_score.mean())
 
-$$
-f(r_t;\mu_t, \sigma_t, \eta) = \frac{1}{\sigma_t}\cdot f\left (\frac{r_t - \mu_t}{\sigma_t}; \eta \right)
-$$  
+# CRPS via tanh-sinh quadrature
+crps = model.calc_crps(test[:, 0])
+print("CRPS:", crps.mean())
+```
 
-Each distribution defines a density function `.pdf()`, quantile function `.ppf()`, and 
-log-likelihood function `.llh()`
+---
 
-### Symmetric distributions
+## The `density_estimation` Package
 
-`dist.Normal`, `dist.Laplace`, `dist.StudentT` use density and quantile functions from 
-distributions imported from `scipy.stats`. The `.llh()` methods call jit-compiled 
-log-likelihood functions for faster MLE estimation.
+### Core Module
 
-### Skewed distributions
+The core module (`density_estimation.core`) provides the foundational abstractions:
 
-`dist.CondSNorm`, `dist.CondSLap`, `dist.CondST` add skewness to the corresponding 
-symmetric distribution using [Wurtz et al. (2006)](https://api.semanticscholar.org/CorpusID:17916711) reparametrization of 
-[Fernandez and Steel (1998)](https://doi.org/10.2307/2669632).
+| Class | Description |
+|---|---|
+| **`ModelSpec`** | Abstract base class for model specifications. Subclasses define the conditional mean/variance dynamics, parameter bounds, constraints, and how to construct `FitData`. |
+| **`Model`** | Fitted model container. Created by `Model.fit(data, spec)` using SLSQP optimization. Holds the specification, fitted parameters, derived `FitData`, and a `ModelFit` diagnostics object. |
+| **`ModelFit`** | Post-estimation diagnostics: log-likelihood, AIC, BIC, standard errors (sandwich estimator), significance tests, Ljung-Box, ARCH-LM, and Jarque-Bera tests. |
+| **`Distribution`** | Abstract base for error distributions. Subclasses implement `.pdf()`, `.ppf()`, and `.llh()`. |
 
-$$
-\begin{aligned}
-& f(z_t;\xi,\eta) = \frac{2\sigma_\xi}{\xi + \frac{1}{\xi}} \cdot f(z_{\xi t};\eta) 
-\\\,\\
-& z_{\xi t} = (\sigma_{\xi}z_t + \mu_{\xi})\xi^{sgn(\sigma_{\xi}z_t + \mu_{\xi})}
-\\
-& \mu_{\xi} = \text{M}_1(\xi - \frac{1}{\xi})
-\\
-&\sigma_{\xi} = (1 - \text{M}_1^2)(\xi^2 + \frac{1}{\xi^2}) + 2\text{M}_1^2 - 1
-\end{aligned}
-$$
+#### Fitting Pipeline
 
-`dist.CondJsu` uses density and quantile functions adapted from the R package `rugarch`
-rather than equivalent methods from `scipy.stats`. A jit-compiled log-likelihood function
-has not been implemented for this distribution, but is intended to be added in the 
-future. Instead, `.llh()` sums the log of the values returned by its `.pdf()` method.  
+1. A `ModelSpec` subclass is instantiated with distribution and order parameters.
+2. `Model.fit(data, spec)` minimizes the scaled negative log-likelihood via SLSQP.
+3. On success, a `Model` object is returned containing:
+   - `spec` — the model specification
+   - `data` — `FitData` with residuals, volatility, and standardized residuals
+   - `parameters` — the MLE parameter vector
+   - `evaluate` — a `ModelFit` with diagnostic methods
 
-$$
-f(z_t; \xi, \lambda, \gamma, \delta) = 
-    \frac{\delta}{
-        \lambda\sqrt{1 + \Big(\frac{z_t - \xi}{\lambda}\Big)^2}
-        } 
-    \cdot 
-    \phi \left[
-        \gamma + \delta \sinh^{-1} \Big(\frac{z_t - \xi}{\lambda}\Big)
-    \right]
-$$  
 
-$$
-\begin{aligned}
-    & \omega = \exp(\delta^{-2})\\
-    &\Omega = \frac{\gamma}{\delta}
-\end{aligned}
-\quad
-\begin{aligned}
-    & \xi = -\lambda\omega^{\frac{1}{2}}\sinh\Omega \\
-    & \lambda = \left[ \frac{1}{2}(\omega - 1)(\omega\cosh2\Omega + 1) \right]^{-\frac{1}{2}}
-\end{aligned}
-$$
+### Model Factory
 
-<br>
+`ModelFactory` provides a convenient interface for fitting multiple models of the same
+class:
 
-## Future Development
+```python
+from density_estimation import ModelFactory, ArmaGarch
+from density_estimation.distributions import Normal, Laplace, StudentT
 
-Implement VaR and expected shortfall from estimated densities
+factory = ModelFactory(ArmaGarch, garch_order=(1, 1))
+configs = []
+for distribution in [Normal, Laplace, StudentT]:    
+    configs.extend([
+        {"data": returns, "arma_order": (1, 0), "error_dist": distribution},
+        {"data": returns, "arma_order": (1, 1), "error_dist": distribution},
+        {"data": returns, "arma_order": (2, 1), "error_dist": distribution},
+    ])
 
-Implement additional models  
-- ARCD model of Hansen (1994)
-- GARCHS model of Harvey and Siddique (1999)
-- GARCHSK model of Leon et al. (2005)
-- HEAVY model of Shephard and Shephard (2009)
-- Other GARCH/HAR family models
-- Other Neural network architectures (beneath param/distribution layers)
-    - Kim and Won 2018
-    - Benitez et al 2021
-    - Barunik et al 2024
+
+# Fit models sequentially
+models = factory.build_many(configs)
+
+# Fit models in parallel (uses multiprocessing.Pool)
+models = factory.build_many(configs, proc_count=3)
+```
+
+Each config dict must include a `"data"` key. All other keys are passed to the
+model specification constructor. Optional keys `display`, `ftol`, `maxiter`, and
+`compute_derivs` control the fitting behavior.
+
+### Data Utilities
+
+`density_estimation.common.get_data(taq_data_path, M=79)` loads a TAQ CSV file and 
+computes log returns, daily realized volatility, weekly realized volatility, and 
+monthly realized volatility.
+---
+
+## Workflows
+
+### GARCH Model Selection
+
+Performs asearch over ARMA-GARCH specifications for a single company. Uses 
+`ModelFactory.build_many()` with multiprocessing for parallel fitting. Results
+(log-likelihood, AIC, BIC) are saved to CSV in `trials/arma_garch/model_selection/`.
+
+```bash
+python eval_garch_models.py <company>
+# e.g., python eval_garch_models.py ibm
+```
+
+
+### Building Parametric Models
+
+Fits the best ARMA-GARCH specifications (selected via prior grid search) and all
+HAR-RV distribution variants for each company in `data/TAQ/`:
+
+1. Reads pre-selected GARCH specifications from
+   `trials/arma_garch/model_selection/garch_specs.json`.
+2. Fits each specification plus ARMA(1,0)-GARCH(1,1) and ARMA(1,1)-GARCH(1,1)
+   baselines across all seven distributions.
+3. Fits HAR-RV models for all seven distributions.
+4. Computes Jacobian and Hessian matrices for standard errors.
+5. Serializes fitted models to `trials/arma_garch/` and `trials/har/`.
+
+```bash
+python build_parametric.py
+```
+
+### Distributional Deep Neural Network
+
+**Notebook:** `DDNN.ipynb`
+
+Tunes and evaluates DDNN models for each company and distribution:
+
+1. **Data split:** 64% train / 16% validation / 20% test (the 80% in-sample split is
+   further split 80/20 for train/validation).
+2. **Hyperparameter search:** Uses `keras_tuner.RandomSearch` (30 trials) with early
+   stopping (patience=5) over 50 epochs per trial.
+3. **Model evaluation:** The best model per company/distribution is evaluated on the
+   held-out test set using:
+   - **Log score** (negative log-probability)
+   - **CRPS** (continuous ranked probability score via tanh-sinh quadrature)
+
+Best hyperparameters are saved to `results/nn_model_hp.json` and evaluation results
+are aggregated into `results/nn_trials.csv`.

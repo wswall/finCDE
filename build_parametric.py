@@ -70,7 +70,7 @@ def make_garch_configs(data, specs):
 
 if __name__ == "__main__":
 
-    with open('garch_specs.json', 'r') as jfile:
+    with open('trials/arma_garch/model_selection/garch_specs.json', 'r') as jfile:
         garch_specs = json.load(jfile)
 
     garch_factory = ModelFactory(ArmaGarch)
